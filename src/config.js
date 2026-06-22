@@ -6,7 +6,7 @@ export const KEEP_ALIVE_CONFIG = {
 
   targets: [
     {
-      id: "example-system",
+      id: "example-page",
       enabled: false,
 
       // 用于在没有匹配标签页且 openIfMissing=true 时打开页面。
@@ -20,7 +20,7 @@ export const KEEP_ALIVE_CONFIG = {
       urlRegexes: [],
 
       // 要点击的元素。支持 CSS selector；也可以改成 selectors 数组作为备用链。
-      selector: "#keep-session-button",
+      selector: "#page-helper-target",
       selectors: [],
 
       intervalMinutes: 50,
@@ -29,7 +29,7 @@ export const KEEP_ALIVE_CONFIG = {
       activeWhenOpened: true,
       promptLoginWhenOpened: true,
       loginPromptTitle: "Page Helper 已打开目标页面",
-      loginPromptMessage: "请完成登录。登录成功后，扩展会按配置定时点击页面以保持会话状态。",
+      loginPromptMessage: "请完成登录。登录成功后，扩展会按配置定时执行页面动作。",
       loginPromptDurationMs: 30000,
       clickAllMatchingTabs: false,
       allFrames: true,

@@ -4,13 +4,15 @@ const ALARM_PREFIX = "pagehelper.keepAlive.";
 const DEFAULT_INTERVAL_MINUTES = 50;
 const MIN_INTERVAL_MINUTES = 1;
 const DEFAULT_WAIT_FOR_SELECTOR_MS = 10000;
+const LOG_STORAGE_KEY = "pagehelper.logs";
+const LOG_LIMIT = 300;
 
-chrome.runtime.onInstalled.addListener(() => {
-  void setupAlarms();
+chrome.runtime.onInstalled.addListener((details) => {
+  void setupAlarms(`runtime.onInstalled:${details.reason}`);
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void setupAlarms();
+  void setupAlarms("runtime.onStartup");
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -18,46 +20,126 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     return;
   }
 
+  logInfo("Alarm fired.", {
+    alarmName: alarm.name,
+    scheduledTime: formatTimestamp(alarm.scheduledTime),
+    periodInMinutes: alarm.periodInMinutes
+  });
+
   const targetId = alarm.name.slice(ALARM_PREFIX.length);
   const target = getEnabledTargets().find((item) => item.id === targetId);
   if (!target) {
+    logWarn("Alarm target is no longer enabled; clearing stale alarm.", {
+      alarmName: alarm.name,
+      targetId
+    });
     void chrome.alarms.clear(alarm.name);
     return;
   }
 
-  void runTarget(target);
+  void runTarget(target, "alarm");
 });
 
-async function setupAlarms() {
+// Reconcile alarms whenever the MV3 service worker wakes. This makes unpacked
+// extension reloads and edited developer config much easier to diagnose.
+void setupAlarms("service-worker-start");
+
+async function setupAlarms(reason) {
   const targets = getEnabledTargets();
   const expectedNames = new Set(targets.map((target) => alarmNameFor(target)));
   const existingAlarms = await chrome.alarms.getAll();
+  const existingPageHelperAlarms = existingAlarms.filter((alarm) => alarm.name.startsWith(ALARM_PREFIX));
+
+  logInfo("Setting up alarms.", {
+    reason,
+    configuredTargetCount: normalizeArray(KEEP_ALIVE_CONFIG.targets).length,
+    enabledTargetIds: targets.map((target) => target.id),
+    existingAlarmNames: existingPageHelperAlarms.map((alarm) => alarm.name)
+  });
+
+  if (!targets.length) {
+    logWarn("No enabled targets. Set target.enabled=true in src/config.js, then reload the extension.", {
+      configuredTargets: summarizeTargets(normalizeArray(KEEP_ALIVE_CONFIG.targets))
+    });
+  }
 
   await Promise.all(
-    existingAlarms
-      .filter((alarm) => alarm.name.startsWith(ALARM_PREFIX) && !expectedNames.has(alarm.name))
-      .map((alarm) => chrome.alarms.clear(alarm.name))
+    existingPageHelperAlarms
+      .filter((alarm) => !expectedNames.has(alarm.name))
+      .map(async (alarm) => {
+        await chrome.alarms.clear(alarm.name);
+        logInfo("Cleared stale alarm.", { alarmName: alarm.name });
+      })
   );
 
-  await Promise.all(targets.map((target) => createOrUpdateAlarm(target)));
-  console.info("[PageHelper] Alarms ready:", targets.map((target) => target.id));
+  await Promise.all(
+    targets.map((target) =>
+      createOrUpdateAlarm(
+        target,
+        existingPageHelperAlarms.find((alarm) => alarm.name === alarmNameFor(target))
+      )
+    )
+  );
+  logInfo("Alarm setup complete.", { enabledTargetIds: targets.map((target) => target.id) });
 }
 
-async function createOrUpdateAlarm(target) {
+async function createOrUpdateAlarm(target, existingAlarm) {
   const intervalMinutes = normalizeIntervalMinutes(target.intervalMinutes);
   const startDelaySeconds = normalizeStartDelaySeconds(target.startDelaySeconds);
+  const alarmName = alarmNameFor(target);
 
-  await chrome.alarms.create(alarmNameFor(target), {
-    when: Date.now() + startDelaySeconds * 1000,
+  if (existingAlarm?.periodInMinutes === intervalMinutes) {
+    logInfo("Keeping existing alarm.", {
+      targetId: target.id,
+      alarmName,
+      nextRunAt: formatTimestamp(existingAlarm.scheduledTime),
+      intervalMinutes
+    });
+    return;
+  }
+
+  const firstRunAt = Date.now() + startDelaySeconds * 1000;
+  await chrome.alarms.create(alarmName, {
+    when: firstRunAt,
     periodInMinutes: intervalMinutes
+  });
+
+  logInfo("Created alarm.", {
+    targetId: target.id,
+    alarmName,
+    firstRunAt: formatTimestamp(firstRunAt),
+    intervalMinutes,
+    startDelaySeconds,
+    pageUrl: target.pageUrl,
+    openIfMissing: target.openIfMissing !== false,
+    urlPatterns: getQueryUrlPatterns(target),
+    urlIncludes: normalizeArray(target.urlIncludes),
+    urlRegexes: normalizeArray(target.urlRegexes),
+    selectors: getSelectors(target)
   });
 }
 
-async function runTarget(target) {
+async function runTarget(target, trigger) {
+  logInfo("Running target.", {
+    trigger,
+    targetId: target.id,
+    pageUrl: target.pageUrl,
+    queryUrlPatterns: getQueryUrlPatterns(target),
+    openIfMissing: shouldOpenIfMissing(target),
+    intervalMinutes: normalizeIntervalMinutes(target.intervalMinutes),
+    selectors: getSelectors(target)
+  });
+
   const tabs = await findMatchingTabs(target);
   let tabsToClick = tabs;
 
   if (!tabsToClick.length && shouldOpenIfMissing(target)) {
+    logInfo("No matching tab found; opening configured page.", {
+      targetId: target.id,
+      pageUrl: target.pageUrl,
+      activeWhenOpened: target.activeWhenOpened !== false
+    });
+
     const createdTab = await chrome.tabs.create({
       url: target.pageUrl,
       active: target.activeWhenOpened !== false
@@ -65,12 +147,20 @@ async function runTarget(target) {
 
     await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
     await showLoginPrompt(createdTab, target);
-    console.info(`[PageHelper] Opened "${target.id}" and prompted the user to sign in.`);
+    logInfo("Opened page and prompted the user to sign in.", {
+      targetId: target.id,
+      tabId: createdTab.id,
+      url: createdTab.url
+    });
     return;
   }
 
   if (!tabsToClick.length) {
-    console.warn(`[PageHelper] No matching tab for target "${target.id}".`);
+    logWarn("No matching tab and openIfMissing is disabled or pageUrl is missing.", {
+      targetId: target.id,
+      openIfMissing: target.openIfMissing,
+      pageUrl: target.pageUrl
+    });
     return;
   }
 
@@ -78,13 +168,34 @@ async function runTarget(target) {
     tabsToClick = [selectPreferredTab(tabsToClick)];
   }
 
+  logInfo("Clicking matching tabs.", {
+    targetId: target.id,
+    tabIds: tabsToClick.map((tab) => tab.id),
+    clickAllMatchingTabs: Boolean(target.clickAllMatchingTabs)
+  });
+
   await Promise.all(tabsToClick.map((tab) => clickTabTarget(tab, target)));
 }
 
 async function findMatchingTabs(target) {
   const queryPatterns = getQueryUrlPatterns(target);
   const tabs = await chrome.tabs.query(queryPatterns.length ? { url: queryPatterns } : {});
-  return tabs.filter((tab) => tab.id && tab.url && matchesTargetUrl(tab.url, target));
+  const matchingTabs = tabs.filter((tab) => tab.id && tab.url && matchesTargetUrl(tab.url, target));
+
+  logInfo("Queried tabs.", {
+    targetId: target.id,
+    queryPatterns,
+    candidateCount: tabs.length,
+    matchingCount: matchingTabs.length,
+    candidates: tabs.map((tab) => ({
+      id: tab.id,
+      active: tab.active,
+      status: tab.status,
+      url: tab.url
+    }))
+  });
+
+  return matchingTabs;
 }
 
 function selectPreferredTab(tabs) {
@@ -111,13 +222,25 @@ async function clickTabTarget(tab, target) {
 
     const success = results.find((item) => item.result?.ok);
     if (success) {
-      console.info(`[PageHelper] Clicked "${target.id}" in tab ${tab.id}:`, success.result);
+      logInfo("Clicked target element.", {
+        targetId: target.id,
+        tabId: tab.id,
+        result: success.result
+      });
       return;
     }
 
-    console.warn(`[PageHelper] Could not click "${target.id}" in tab ${tab.id}:`, results);
+    logWarn("Could not click target element.", {
+      targetId: target.id,
+      tabId: tab.id,
+      results
+    });
   } catch (error) {
-    console.error(`[PageHelper] Failed to click "${target.id}" in tab ${tab.id}:`, error);
+    logError("Failed to click target element.", {
+      targetId: target.id,
+      tabId: tab.id,
+      error
+    });
   }
 }
 
@@ -135,8 +258,17 @@ async function showLoginPrompt(tab, target) {
       func: showLoginPromptInPage,
       args: [normalizeLoginPrompt(target)]
     });
+
+    logInfo("Displayed login prompt in page.", {
+      targetId: target.id,
+      tabId: tab.id
+    });
   } catch (error) {
-    console.warn(`[PageHelper] Could not show login prompt for "${target.id}" in tab ${tab.id}:`, error);
+    logWarn("Could not show login prompt in page.", {
+      targetId: target.id,
+      tabId: tab.id,
+      error
+    });
   }
 }
 
@@ -145,7 +277,7 @@ function normalizeLoginPrompt(target) {
     title: target.loginPromptTitle || "Page Helper opened this page",
     message:
       target.loginPromptMessage ||
-      "Please finish signing in. After login, Page Helper will keep this session alive on schedule.",
+      "Please finish signing in. After login, Page Helper will run the configured page action on schedule.",
     durationMs: Math.max(5000, Number(target.loginPromptDurationMs ?? 30000) || 30000)
   };
 }
@@ -198,12 +330,12 @@ function getEnabledTargets() {
     }
 
     if (!target.id) {
-      console.warn("[PageHelper] Ignored target without id:", target);
+      logWarn("Ignored enabled target without id.", { target });
       return false;
     }
 
     if (!getSelectors(target).length) {
-      console.warn(`[PageHelper] Ignored target "${target.id}" without selector.`);
+      logWarn("Ignored enabled target without selector.", { targetId: target.id });
       return false;
     }
 
@@ -278,7 +410,7 @@ function matchesRegex(value, pattern) {
   try {
     return new RegExp(pattern).test(value);
   } catch (error) {
-    console.warn(`[PageHelper] Invalid urlRegex "${pattern}":`, error);
+    logWarn("Invalid urlRegex.", { pattern, error });
     return false;
   }
 }
@@ -316,6 +448,94 @@ function normalizeWaitForSelectorMs(value) {
   }
 
   return Math.max(0, wait);
+}
+
+function summarizeTargets(targets) {
+  return targets.map((target) => ({
+    id: target?.id,
+    enabled: target?.enabled,
+    pageUrl: target?.pageUrl,
+    intervalMinutes: target?.intervalMinutes,
+    openIfMissing: target?.openIfMissing,
+    urlPatterns: normalizeArray(target?.urlPatterns),
+    urlIncludes: normalizeArray(target?.urlIncludes),
+    urlRegexes: normalizeArray(target?.urlRegexes),
+    selectors: target ? getSelectors(target) : []
+  }));
+}
+
+function logInfo(message, details) {
+  void writeLog("info", message, details);
+}
+
+function logWarn(message, details) {
+  void writeLog("warn", message, details);
+}
+
+function logError(message, details) {
+  void writeLog("error", message, details);
+}
+
+async function writeLog(level, message, details) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    message,
+    details: normalizeLogDetails(details)
+  };
+
+  const consoleMethod = level === "error" ? "error" : level === "warn" ? "warn" : "info";
+  console[consoleMethod](`[PageHelper] ${entry.ts} ${message}`, entry.details);
+
+  try {
+    const existing = await chrome.storage.local.get(LOG_STORAGE_KEY);
+    const logs = Array.isArray(existing[LOG_STORAGE_KEY]) ? existing[LOG_STORAGE_KEY] : [];
+    logs.push(entry);
+
+    if (logs.length > LOG_LIMIT) {
+      logs.splice(0, logs.length - LOG_LIMIT);
+    }
+
+    await chrome.storage.local.set({ [LOG_STORAGE_KEY]: logs });
+  } catch (error) {
+    console.warn("[PageHelper] Failed to persist log entry.", error);
+  }
+}
+
+function normalizeLogDetails(value) {
+  if (value instanceof Error) {
+    return normalizeError(value);
+  }
+
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_key, nestedValue) => {
+        if (nestedValue instanceof Error) {
+          return normalizeError(nestedValue);
+        }
+
+        return nestedValue;
+      })
+    );
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeError(error) {
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack
+  };
+}
+
+function formatTimestamp(timestamp) {
+  if (!timestamp) {
+    return null;
+  }
+
+  return new Date(timestamp).toISOString();
 }
 
 async function clickElementInPage(target) {

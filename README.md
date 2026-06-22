@@ -1,6 +1,6 @@
-# Page Helper Session Keeper
+# Page Helper
 
-一个开发者配置型 Chrome 扩展，用于定时点击指定页面里的指定元素，避免页面因为长时间无点击导致会话或 Cookie 过期。
+一个开发者配置型 Chrome 扩展，用于按配置在指定页面执行自动化辅助动作。当前内置了定时点击能力，可用于页面保活、定时触发无副作用控件等场景。
 
 ## 使用方式
 
@@ -9,6 +9,8 @@
 3. 在 Chrome 地址栏打开 `chrome://extensions/`。
 4. 打开右上角「开发者模式」。
 5. 点击「加载已解压的扩展程序」，选择本目录。
+
+每次修改 `src/config.js` 或其它扩展源码后，都需要回到 `chrome://extensions/`，点击这个扩展卡片上的「重新加载」。重新加载后，扩展会在后台日志里打印当前读取到的目标、定时器和下一次执行时间。
 
 ## 配置示例
 
@@ -22,13 +24,13 @@ export const KEEP_ALIVE_CONFIG = {
       pageUrl: "https://admin.example.com/home",
       urlPatterns: ["https://admin.example.com/*"],
       urlIncludes: ["https://admin.example.com/"],
-      selector: "button[data-action='keep-alive']",
+      selector: "button[data-page-helper-action='click-target']",
       intervalMinutes: 50,
       openIfMissing: true,
       activeWhenOpened: true,
       promptLoginWhenOpened: true,
       loginPromptTitle: "Page Helper 已打开目标页面",
-      loginPromptMessage: "请完成登录。登录成功后，扩展会按配置定时点击页面以保持会话状态。",
+      loginPromptMessage: "请完成登录。登录成功后，扩展会按配置定时执行页面动作。",
       clickAllMatchingTabs: false,
       allFrames: true,
       clickStrategy: "mouse-events"
@@ -53,6 +55,29 @@ export const KEEP_ALIVE_CONFIG = {
 - `clickAllMatchingTabs`：是否点击所有匹配标签页；默认只点最近使用的一个。
 - `allFrames`：是否在所有 frame 中查找元素，适合目标元素在 iframe 中的页面。
 - `clickStrategy`：`mouse-events`、`native` 或 `both`。
+
+## 查看日志
+
+1. 打开 `chrome://extensions/`。
+2. 找到 Page Helper。
+3. 点击「Service Worker」或「检查视图」打开后台控制台。
+4. 搜索 `[PageHelper]`。
+
+后台会记录这些关键事件：
+
+- `Setting up alarms.`：扩展读取配置并准备定时器。
+- `No enabled targets.`：没有任何启用的目标，通常是 `enabled` 没改成 `true` 或扩展没重新加载。
+- `Created alarm.`：已创建定时器，日志里会有 `firstRunAt` 和 `intervalMinutes`。
+- `Alarm fired.`：定时器触发。
+- `No matching tab found; opening configured page.`：没有找到页面，准备主动打开 `pageUrl`。
+- `Opened page and prompted the user to sign in.`：页面已打开，并已提示用户登录。
+- `Clicked target element.`：已经完成保活点击。
+
+最近 300 条日志也会保存在 `chrome.storage.local`。在 Service Worker 控制台执行：
+
+```js
+chrome.storage.local.get("pagehelper.logs").then(console.log)
+```
 
 ## 注意事项
 
