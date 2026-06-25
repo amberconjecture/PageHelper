@@ -447,7 +447,7 @@ async function findWebSocketConnectionCandidate(tabs, config) {
   const failures = [];
 
   for (const tab of sortPreferredTabs(tabs)) {
-    const snapshot = await readWebSocketStorageSnapshot(tab, target, config);
+    const snapshot = await readWebSocketStorageSnapshot(tab, config);
     if (!snapshot.ok) {
       failures.push({
         tabId: tab.id,
@@ -477,7 +477,7 @@ async function findWebSocketConnectionCandidate(tabs, config) {
   };
 }
 
-async function readWebSocketStorageSnapshot(tab, target, config) {
+async function readWebSocketStorageSnapshot(tab, config) {
   if (!tab.id) {
     return {
       ok: false,
@@ -492,7 +492,7 @@ async function readWebSocketStorageSnapshot(tab, target, config) {
         allFrames: false
       },
       func: readWebSocketStorageInPage,
-      args: [normalizeWebSocketWatcherConfig(target, config)]
+      args: [normalizeWebSocketWatcherConfig(config)]
     });
 
     const result = results.find((item) => item.result)?.result;
@@ -912,6 +912,7 @@ function normalizeWebSocketConfig(target) {
   const localStorageKey = rawConfig.localStorageKey ?? target.webSocketLocalStorageKey ?? "auth-token";
 
   return {
+    targetId: target.id,
     enabled: rawConfig.enabled ?? target.webSocketEnabled ?? false,
     url: rawConfig.url ?? target.webSocketUrl ?? "",
     targetUrl: rawConfig.targetUrl ?? target.webSocketTargetUrl ?? target.pageUrl ?? "",
@@ -1091,9 +1092,10 @@ function normalizeWebSocketReconcileIntervalMinutes(value) {
   return Math.max(MIN_INTERVAL_MINUTES, interval);
 }
 
-function normalizeWebSocketWatcherConfig(target, config = normalizeWebSocketConfig(target)) {
+function normalizeWebSocketWatcherConfig(targetOrConfig, maybeConfig) {
+  const config = maybeConfig ?? targetOrConfig;
   return {
-    targetId: target.id,
+    targetId: config.targetId,
     localStorageKey: config.localStorageKey,
     sessionStorageKey: config.sessionStorageKey,
     storageCheckIntervalMs: config.storageCheckIntervalMs
