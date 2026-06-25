@@ -9,6 +9,9 @@
     "service_worker": "src/background.js",
     "type": "module"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws: wss:;"
+  },
   "action": {
     "default_title": "Page Helper"
   }

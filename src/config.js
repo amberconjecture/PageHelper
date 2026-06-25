@@ -3,6 +3,9 @@ export const KEEP_ALIVE_CONFIG = {
   defaultIntervalMinutes: 50,
   defaultWaitForSelectorMs: 10000,
   defaultStartDelaySeconds: 10,
+  defaultWebSocketStorageCheckIntervalMs: 3000,
+  defaultWebSocketReconnectDelayMs: 5000,
+  defaultWebSocketReconcileIntervalMinutes: 1,
 
   targets: [
     {
@@ -37,7 +40,31 @@ export const KEEP_ALIVE_CONFIG = {
 
       // mouse-events: 发送 pointer/mouse 事件；native: 调用 element.click()；
       // both: 两种都做。保活一般优先 mouse-events。
-      clickStrategy: "mouse-events"
+      clickStrategy: "mouse-events",
+
+      webSocket: {
+        enabled: false,
+
+        // 服务端 WebSocket 地址。最终会追加两个 query：
+        // 1) localStorageQueryKey=localStorage[localStorageKey]
+        // 2) client_id=JSON path(sessionStorage[sessionStorageKey])
+        url: "wss://example.com/ws",
+
+        // 可选：WebSocket 监听的页面地址规则。未配置时复用上面的 pageUrl/urlPatterns/urlIncludes/urlRegexes。
+        targetUrl: "https://example.com/app/home",
+        targetUrlPatterns: ["https://example.com/*"],
+        targetUrlIncludes: ["https://example.com/app/"],
+        targetUrlRegexes: [],
+
+        localStorageKey: "auth-token",
+        localStorageQueryKey: "auth-token",
+        sessionStorageKey: "page-session",
+        sessionStorageJsonPath: "$.client.id",
+
+        storageCheckIntervalMs: 3000,
+        reconnectDelayMs: 5000,
+        logMessages: false
+      }
     }
   ]
 };

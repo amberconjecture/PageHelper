@@ -1,6 +1,6 @@
 # Page Helper
 
-一个开发者配置型 Chrome 扩展，用于按配置在指定页面执行自动化辅助动作。当前内置了定时点击能力，可用于页面保活、定时触发无副作用控件等场景。
+一个开发者配置型 Chrome 扩展，用于按配置在指定页面执行自动化辅助动作。当前内置了定时点击和服务端 WebSocket 连接能力，可用于页面保活、定时触发无副作用控件、把页面会话身份透传给服务端等场景。
 
 ## 使用方式
 
@@ -33,7 +33,18 @@ export const KEEP_ALIVE_CONFIG = {
       loginPromptMessage: "请完成登录。登录成功后，扩展会按配置定时执行页面动作。",
       clickAllMatchingTabs: false,
       allFrames: true,
-      clickStrategy: "mouse-events"
+      clickStrategy: "mouse-events",
+      webSocket: {
+        enabled: true,
+        url: "wss://api.example.com/page-helper/ws",
+        targetUrl: "https://admin.example.com/home",
+        targetUrlPatterns: ["https://admin.example.com/*"],
+        targetUrlIncludes: ["https://admin.example.com/"],
+        localStorageKey: "auth-token",
+        localStorageQueryKey: "auth-token",
+        sessionStorageKey: "page-session",
+        sessionStorageJsonPath: "$.client.id"
+      }
     }
   ]
 };
@@ -56,6 +67,23 @@ export const KEEP_ALIVE_CONFIG = {
 - `allFrames`：是否在所有 frame 中查找元素，适合目标元素在 iframe 中的页面。
 - `clickStrategy`：`mouse-events`、`native` 或 `both`。
 
+### WebSocket 字段
+
+- `webSocket.enabled`：是否启用 WebSocket 能力。
+- `webSocket.url`：服务端 WebSocket 地址，支持 `ws://` 和 `wss://`。
+- `webSocket.targetUrl` / `targetUrlPatterns` / `targetUrlIncludes` / `targetUrlRegexes`：用于检测目标页面的地址规则；未配置时复用 target 上的 `pageUrl` / `urlPatterns` / `urlIncludes` / `urlRegexes`。
+- `webSocket.localStorageKey`：目标页面 `localStorage` 中的 key，默认示例为 `auth-token`。只有这个 key 有值时才会发起连接。
+- `webSocket.localStorageQueryKey`：追加到 WebSocket URL 上的 query key；未配置时等于 `localStorageKey`。
+- `webSocket.sessionStorageKey`：目标页面 `sessionStorage` 中保存 client 信息的 key。
+- `webSocket.sessionStorageJsonPath`：从 `sessionStorage[sessionStorageKey]` 这段 JSON 里提取 `client_id` 的路径，例如 `$.client.id`、`user.clients[0].id`。最终 query key 固定为 `client_id`。
+- `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
+- `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
+- `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
+
+WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，且 `localStorage[localStorageKey]` 有值、`sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
+
+WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航离开后，扩展会主动断开连接。若 token 或 client_id 发生变化，扩展会用新的 query 重建连接。
+
 ## 查看日志
 
 1. 打开 `chrome://extensions/`。
@@ -72,6 +100,9 @@ export const KEEP_ALIVE_CONFIG = {
 - `No matching tab found; opening configured page.`：没有找到页面，准备主动打开 `pageUrl`。
 - `Opened page and prompted the user to sign in.`：页面已打开，并已提示用户登录。
 - `Clicked target element.`：已经完成保活点击。
+- `WebSocket connecting.` / `WebSocket connected.`：已经按配置开始连接或连接成功，日志里的 URL 会隐藏 query 值。
+- `WebSocket prerequisites are not ready.`：目标页存在，但 localStorage token 或 sessionStorage client_id 还没准备好。
+- `Closing WebSocket connection.`：所有匹配目标页都已关闭、导航离开，或配置变更导致连接关闭。
 
 最近 300 条日志也会保存在 `chrome.storage.local`。在 Service Worker 控制台执行：
 
