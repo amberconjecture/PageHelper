@@ -46,11 +46,11 @@ export const KEEP_ALIVE_CONFIG = {
         enabled: false,
 
         // 服务端 WebSocket 地址。最终会追加两个 query：
-        // 1) localStorageQueryKey=localStorage[localStorageKey]
-        // 2) client_id=JSON path(sessionStorage[sessionStorageKey])
+        // 1) localStorageQueryKey=TargetUrl 页面的 localStorage[localStorageKey]
+        // 2) client_id=pageUrl 页面的 JSON path(sessionStorage[sessionStorageKey])
         url: "wss://example.com/ws",
 
-        // 可选：WebSocket 监听的页面地址规则。未配置时复用上面的 pageUrl/urlPatterns/urlIncludes/urlRegexes。
+        // 可选：WebSocket 监听的 TargetUrl 地址规则。未配置时复用上面的 pageUrl/urlPatterns/urlIncludes/urlRegexes。
         targetUrl: "https://example.com/app/home",
         targetUrlPatterns: ["https://example.com/*"],
         targetUrlIncludes: ["https://example.com/app/"],

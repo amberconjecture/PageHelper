@@ -64,6 +64,11 @@ export function getWebSocketTargets() {
       return false;
     }
 
+    if (!target.pageUrl) {
+      logWarn("Ignored WebSocket target without pageUrl for sessionStorage lookup.", { targetId: target.id });
+      return false;
+    }
+
     return true;
   });
 }
@@ -128,6 +133,20 @@ export function getWebSocketPageTarget(target, config = normalizeWebSocketConfig
     urlPatterns: config.targetUrlPatterns ?? target.urlPatterns,
     urlIncludes: config.targetUrlIncludes ?? target.urlIncludes,
     urlRegexes: config.targetUrlRegexes ?? target.urlRegexes
+  };
+}
+
+export function getWebSocketSessionPageTarget(target) {
+  if (!target.pageUrl) {
+    return null;
+  }
+
+  return {
+    id: target.id,
+    pageUrl: target.pageUrl,
+    urlPatterns: [],
+    urlIncludes: [],
+    urlRegexes: []
   };
 }
 

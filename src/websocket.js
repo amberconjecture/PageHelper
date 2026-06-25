@@ -7,6 +7,7 @@ import {
 } from "./page-scripts.js";
 import {
   getWebSocketPageTarget,
+  getWebSocketSessionPageTarget,
   getWebSocketTargets,
   normalizeWebSocketConfig,
   normalizeWebSocketReconcileIntervalMinutes,
@@ -130,26 +131,36 @@ export async function reconcileWebSockets(reason) {
 
 async function reconcileWebSocketTarget(target, reason) {
   const config = normalizeWebSocketConfig(target);
-  const pageTarget = getWebSocketPageTarget(target, config);
-  const tabs = await findMatchingTabs(pageTarget, { log: false });
+  const targetUrlPageTarget = getWebSocketPageTarget(target, config);
+  const sessionPageTarget = getWebSocketSessionPageTarget(target);
+  const targetUrlTabs = await findMatchingTabs(targetUrlPageTarget, { log: false });
+  const sessionPageTabs = sessionPageTarget ? await findMatchingTabs(sessionPageTarget, { log: false }) : [];
 
   logInfo("Queried WebSocket target tabs.", {
     reason,
     targetId: target.id,
-    queryPatterns: getQueryUrlPatterns(pageTarget),
-    matchingCount: tabs.length,
-    tabIds: tabs.map((tab) => tab.id)
+    targetUrlQueryPatterns: getQueryUrlPatterns(targetUrlPageTarget),
+    targetUrlMatchingCount: targetUrlTabs.length,
+    targetUrlTabIds: targetUrlTabs.map((tab) => tab.id),
+    pageUrl: target.pageUrl,
+    pageUrlQueryPatterns: sessionPageTarget ? getQueryUrlPatterns(sessionPageTarget) : [],
+    pageUrlMatchingCount: sessionPageTabs.length,
+    pageUrlTabIds: sessionPageTabs.map((tab) => tab.id)
   });
 
-  if (!tabs.length) {
+  if (!targetUrlTabs.length) {
     disconnectWebSocket(target.id, "no-matching-tabs");
     return;
   }
 
-  // 注入轻量 watcher，处理用户登录后 token/client_id 才写入 storage 的场景。
-  await Promise.all(tabs.map((tab) => installWebSocketStorageWatcher(tab, target, config)));
+  // TargetUrl 负责 localStorage token；pageUrl 负责 sessionStorage client_id。
+  // 两边都装 watcher，任意一侧登录态变化都触发一次完整重扫。
+  await Promise.all([
+    ...targetUrlTabs.map((tab) => installWebSocketStorageWatcher(tab, target, config)),
+    ...sessionPageTabs.map((tab) => installWebSocketStorageWatcher(tab, target, config))
+  ]);
 
-  const candidate = await findWebSocketConnectionCandidate(tabs, config);
+  const candidate = await findWebSocketConnectionCandidate(targetUrlTabs, sessionPageTabs, config);
   if (!candidate.ok) {
     logInfo("WebSocket prerequisites are not ready.", {
       reason,
@@ -195,7 +206,35 @@ async function installWebSocketStorageWatcher(tab, target, config) {
   }
 }
 
-async function findWebSocketConnectionCandidate(tabs, config) {
+async function findWebSocketConnectionCandidate(targetUrlTabs, sessionPageTabs, config) {
+  const localStorageResult = await findLocalStorageCandidate(targetUrlTabs, config);
+  const sessionStorageResult = await findSessionStorageCandidate(sessionPageTabs, config);
+
+  if (!localStorageResult.ok || !sessionStorageResult.ok) {
+    return {
+      ok: false,
+      failures: {
+        localStorage: localStorageResult.failures,
+        sessionStorage: sessionStorageResult.failures
+      }
+    };
+  }
+
+  return buildWebSocketConnectionCandidate(config, localStorageResult, sessionStorageResult);
+}
+
+async function findLocalStorageCandidate(tabs, config) {
+  if (!tabs.length) {
+    return {
+      ok: false,
+      failures: [
+        {
+          reason: "no-target-url-tabs"
+        }
+      ]
+    };
+  }
+
   const failures = [];
 
   for (const tab of sortPreferredTabs(tabs)) {
@@ -209,15 +248,79 @@ async function findWebSocketConnectionCandidate(tabs, config) {
       continue;
     }
 
-    const candidate = buildWebSocketConnectionCandidate(tab, config, snapshot);
-    if (candidate.ok) {
-      return candidate;
+    if (isNonEmptyValue(snapshot.localStorageValue)) {
+      return {
+        ok: true,
+        tab,
+        snapshot,
+        localStorageValue: String(snapshot.localStorageValue)
+      };
     }
 
     failures.push({
       tabId: tab.id,
-      reason: candidate.reason,
-      localStorageKey: config.localStorageKey,
+      reason: "missing-local-storage-value",
+      localStorageKey: config.localStorageKey
+    });
+  }
+
+  return {
+    ok: false,
+    failures
+  };
+}
+
+async function findSessionStorageCandidate(tabs, config) {
+  if (!tabs.length) {
+    return {
+      ok: false,
+      failures: [
+        {
+          reason: "no-page-url-tabs",
+          sessionStorageKey: config.sessionStorageKey,
+          sessionStorageJsonPath: config.sessionStorageJsonPath
+        }
+      ]
+    };
+  }
+
+  const failures = [];
+
+  for (const tab of sortPreferredTabs(tabs)) {
+    const snapshot = await readWebSocketStorageSnapshot(tab, config);
+    if (!snapshot.ok) {
+      failures.push({
+        tabId: tab.id,
+        reason: snapshot.reason,
+        error: snapshot.error
+      });
+      continue;
+    }
+
+    const clientIdResult = extractJsonPathValue(snapshot.sessionStorageValue, config.sessionStorageJsonPath);
+    if (!clientIdResult.ok) {
+      failures.push({
+        tabId: tab.id,
+        reason: clientIdResult.reason,
+        sessionStorageKey: config.sessionStorageKey,
+        sessionStorageJsonPath: config.sessionStorageJsonPath
+      });
+      continue;
+    }
+
+    const clientIdValue = stringifyQueryValue(clientIdResult.value);
+    if (isNonEmptyValue(clientIdValue)) {
+      return {
+        ok: true,
+        tab,
+        snapshot,
+        clientIdValue
+      };
+    }
+
+    failures.push({
+      tabId: tab.id,
+      reason: "missing-client-id",
       sessionStorageKey: config.sessionStorageKey,
       sessionStorageJsonPath: config.sessionStorageJsonPath
     });
@@ -266,37 +369,17 @@ async function readWebSocketStorageSnapshot(tab, config) {
   }
 }
 
-function buildWebSocketConnectionCandidate(tab, config, snapshot) {
-  const localStorageValue = snapshot.localStorageValue;
-  if (!isNonEmptyValue(localStorageValue)) {
-    return {
-      ok: false,
-      reason: "missing-local-storage-value"
-    };
-  }
-
-  const clientIdResult = extractJsonPathValue(snapshot.sessionStorageValue, config.sessionStorageJsonPath);
-  if (!clientIdResult.ok) {
-    return {
-      ok: false,
-      reason: clientIdResult.reason
-    };
-  }
-
-  const clientIdValue = stringifyQueryValue(clientIdResult.value);
-  if (!isNonEmptyValue(clientIdValue)) {
-    return {
-      ok: false,
-      reason: "missing-client-id"
-    };
-  }
-
+function buildWebSocketConnectionCandidate(config, localStorageResult, sessionStorageResult) {
   return {
     ok: true,
-    tabId: tab.id,
-    pageUrl: snapshot.href || tab.url,
-    localStorageValue: String(localStorageValue),
-    clientIdValue
+    tabId: localStorageResult.tab.id,
+    pageUrl: localStorageResult.snapshot.href || localStorageResult.tab.url,
+    sessionTabId: sessionStorageResult.tab.id,
+    sessionPageUrl: sessionStorageResult.snapshot.href || sessionStorageResult.tab.url,
+    localStorageKey: config.localStorageKey,
+    localStorageValue: localStorageResult.localStorageValue,
+    sessionStorageKey: config.sessionStorageKey,
+    clientIdValue: sessionStorageResult.clientIdValue
   };
 }
 
@@ -417,6 +500,8 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     targetId: target.id,
     tabId: candidate.tabId,
     pageUrl: candidate.pageUrl,
+    sessionTabId: candidate.sessionTabId,
+    sessionPageUrl: candidate.sessionPageUrl,
     webSocketUrl: redactWebSocketUrl(urlResult.url)
   });
 }
@@ -490,32 +575,24 @@ export async function handleWebSocketStorageChangedMessage(message, sender) {
   }
 
   const config = normalizeWebSocketConfig(target);
-  const pageTarget = getWebSocketPageTarget(target, config);
+  const targetUrlPageTarget = getWebSocketPageTarget(target, config);
+  const sessionPageTarget = getWebSocketSessionPageTarget(target);
   const tabUrl = sender.tab.url || message.href;
-  if (!tabUrl || !matchesTargetUrl(tabUrl, pageTarget)) {
+  const isTargetUrlTab = tabUrl && matchesTargetUrl(tabUrl, targetUrlPageTarget);
+  const isSessionPageTab = tabUrl && sessionPageTarget && matchesTargetUrl(tabUrl, sessionPageTarget);
+  if (!isTargetUrlTab && !isSessionPageTab) {
     return;
   }
 
-  const candidate = buildWebSocketConnectionCandidate(sender.tab, config, {
-    ok: true,
-    href: message.href,
-    localStorageValue: message.localStorageValue,
-    sessionStorageValue: message.sessionStorageValue
-  });
-
-  if (candidate.ok) {
-    connectOrUpdateWebSocket(target, config, candidate, `storage-watcher:${message.reason || "changed"}`);
-    return;
-  }
-
-  logInfo("WebSocket storage watcher reported incomplete prerequisites.", {
+  logInfo("WebSocket storage watcher triggered reconcile.", {
     targetId: target.id,
     tabId: sender.tab.id,
-    reason: candidate.reason,
-    localStorageKey: config.localStorageKey,
-    sessionStorageKey: config.sessionStorageKey,
-    sessionStorageJsonPath: config.sessionStorageJsonPath
+    href: message.href,
+    reason: message.reason,
+    source: isTargetUrlTab ? "targetUrl" : "pageUrl"
   });
+
+  await reconcileWebSocketTarget(target, `storage-watcher:${message.reason || "changed"}`);
 }
 
 function getExistingWebSocketState(targetId) {
