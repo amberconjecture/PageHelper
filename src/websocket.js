@@ -4,12 +4,14 @@ import { formatTimestamp, logError, logInfo, logWarn, normalizeError } from "./l
 import {
   executeWebSocketCommandFetchInPage,
   installWebSocketStorageWatcherInPage,
-  readWebSocketStorageInPage
+  readWebSocketStorageInPage,
+  showLoginPromptInPage
 } from "./page-scripts.js";
 import {
   getWebSocketPageTarget,
   getWebSocketSessionPageTarget,
   getWebSocketTargets,
+  normalizeLoginPrompt,
   normalizeWebSocketConfig,
   normalizeWebSocketReconcileIntervalMinutes,
   normalizeWebSocketWatcherConfig
@@ -18,7 +20,8 @@ import {
   findMatchingTabs,
   getQueryUrlPatterns,
   matchesTargetUrl,
-  sortPreferredTabs
+  sortPreferredTabs,
+  waitForTabComplete
 } from "./tabs.js";
 import {
   buildWebSocketUrl,
@@ -37,6 +40,7 @@ import {
 // 每次唤醒都会通过 reconcileWebSockets 重新扫描已打开 Tab，恢复应有连接。
 const webSocketConnections = new Map();
 const webSocketReconnectTimers = new Map();
+const webSocketSessionPageOpenPromises = new Map();
 
 export function isWebSocketReconcileAlarm(alarm) {
   return alarm.name === WEBSOCKET_RECONCILE_ALARM;
@@ -135,7 +139,7 @@ async function reconcileWebSocketTarget(target, reason) {
   const targetUrlPageTarget = getWebSocketPageTarget(target, config);
   const sessionPageTarget = getWebSocketSessionPageTarget(target);
   const targetUrlTabs = await findMatchingTabs(targetUrlPageTarget, { log: false });
-  const sessionPageTabs = sessionPageTarget ? await findMatchingTabs(sessionPageTarget, { log: false }) : [];
+  let sessionPageTabs = sessionPageTarget ? await findMatchingTabs(sessionPageTarget, { log: false }) : [];
 
   logInfo("Queried WebSocket target tabs.", {
     reason,
@@ -152,6 +156,10 @@ async function reconcileWebSocketTarget(target, reason) {
   if (!targetUrlTabs.length) {
     disconnectWebSocket(target.id, "no-matching-tabs");
     return;
+  }
+
+  if (sessionPageTarget && !sessionPageTabs.length) {
+    sessionPageTabs = await openWebSocketSessionPageIfMissing(target, sessionPageTarget, reason);
   }
 
   // TargetUrl 负责 localStorage token；pageUrl 负责 sessionStorage client_id。
@@ -173,6 +181,98 @@ async function reconcileWebSocketTarget(target, reason) {
   }
 
   connectOrUpdateWebSocket(target, config, candidate, reason);
+}
+
+async function openWebSocketSessionPageIfMissing(target, sessionPageTarget, reason) {
+  if (!target.pageUrl) {
+    return [];
+  }
+
+  const existingOpenPromise = webSocketSessionPageOpenPromises.get(target.id);
+  if (existingOpenPromise) {
+    logInfo("Waiting for existing WebSocket pageUrl open.", {
+      reason,
+      targetId: target.id,
+      pageUrl: target.pageUrl
+    });
+
+    await existingOpenPromise;
+    return findMatchingTabs(sessionPageTarget, { log: false });
+  }
+
+  const openPromise = openWebSocketSessionPage(target, reason);
+  webSocketSessionPageOpenPromises.set(target.id, openPromise);
+
+  try {
+    await openPromise;
+  } finally {
+    if (webSocketSessionPageOpenPromises.get(target.id) === openPromise) {
+      webSocketSessionPageOpenPromises.delete(target.id);
+    }
+  }
+
+  return findMatchingTabs(sessionPageTarget, { log: false });
+}
+
+async function openWebSocketSessionPage(target, reason) {
+  logInfo("TargetUrl is open but pageUrl is missing; opening pageUrl for WebSocket.", {
+    reason,
+    targetId: target.id,
+    pageUrl: target.pageUrl,
+    activeWhenOpened: target.activeWhenOpened !== false
+  });
+
+  try {
+    const createdTab = await chrome.tabs.create({
+      url: target.pageUrl,
+      active: target.activeWhenOpened !== false
+    });
+
+    await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
+    await showWebSocketLoginPrompt(createdTab, target);
+
+    logInfo("Opened pageUrl for WebSocket.", {
+      reason,
+      targetId: target.id,
+      tabId: createdTab.id,
+      url: createdTab.url || target.pageUrl
+    });
+  } catch (error) {
+    logWarn("Could not open pageUrl for WebSocket.", {
+      reason,
+      targetId: target.id,
+      pageUrl: target.pageUrl,
+      error
+    });
+  }
+}
+
+async function showWebSocketLoginPrompt(tab, target) {
+  if (!tab.id || target.promptLoginWhenOpened === false) {
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: {
+        tabId: tab.id,
+        allFrames: false
+      },
+      func: showLoginPromptInPage,
+      args: [normalizeLoginPrompt(target)]
+    });
+
+    logInfo("Displayed login prompt in WebSocket pageUrl.", {
+      targetId: target.id,
+      tabId: tab.id
+    });
+  } catch (error) {
+    logWarn("Could not show login prompt in WebSocket pageUrl.", {
+      targetId: target.id,
+      tabId: tab.id,
+      error
+    });
+  }
 }
 
 async function installWebSocketStorageWatcher(tab, target, config) {
