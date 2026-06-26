@@ -44,6 +44,7 @@ export const KEEP_ALIVE_CONFIG = {
         localStorageQueryKey: "auth-token",
         sessionStorageKey: "page-session",
         sessionStorageJsonPath: "$.client.id",
+        csrfTokenUrl: "https://admin.example.com/api/csrf-token",
         commandHeaders: {
           "X-Page-Helper": "true"
         }
@@ -79,7 +80,8 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.localStorageQueryKey`：追加到 WebSocket URL 上的 query key；未配置时等于 `localStorageKey`。
 - `webSocket.sessionStorageKey`：顶层 `pageUrl` 页面 `sessionStorage` 中保存 client 信息的 key。
 - `webSocket.sessionStorageJsonPath`：从 `pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 这段 JSON 里提取 `client_id` 的路径，例如 `$.client.id`、`user.clients[0].id`。最终 query key 固定为 `client_id`。
-- `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象；`X-hw-Csrftoken` 会从该页面 `localStorage.userInfo` JSON 的 `csrfToken` 字段自动设置。
+- `webSocket.csrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内先用 `GET` 调用这个接口；接口返回的完整 JSON 会被序列化后写入请求头 `X-hw-Csrftoken`。
+- `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
@@ -96,7 +98,7 @@ WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航
 - `payload`：作为 fetch 请求体；对象会序列化为 JSON 字符串。
 - `method`：作为 fetch method；未提供时默认为 `POST`。
 
-请求头会包含 `X-hw-Csrftoken`，值来自 `pageUrl` 页面 `localStorage.userInfo` JSON 中的 `csrfToken` 字段，并会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
+请求前会先在 `pageUrl` 页面内用 `GET` 调用 `webSocket.csrfTokenUrl`，并带上页面 cookie。该接口返回的完整 JSON 会被 `JSON.stringify` 后放入 `X-hw-Csrftoken` 请求头，并会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
 
 ```json
 {

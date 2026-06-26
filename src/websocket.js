@@ -589,12 +589,14 @@ async function executeWebSocketCommandFetch(target, config, connection, message)
         tabId: tabResult.tab.id,
         allFrames: false
       },
+      world: "MAIN",
       func: executeWebSocketCommandFetchInPage,
       args: [
         {
           action: message.action,
           method: message.method,
           payload: message.payload,
+          csrfTokenUrl: config.csrfTokenUrl,
           headers: config.commandHeaders
         }
       ]

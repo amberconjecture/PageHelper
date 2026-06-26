@@ -178,7 +178,7 @@ export async function executeWebSocketCommandFetchInPage(command) {
     };
   }
 
-  const csrfResult = readCsrfToken();
+  const csrfResult = await readCsrfToken();
   if (!csrfResult.ok) {
     return {
       ok: false,
@@ -244,47 +244,56 @@ export async function executeWebSocketCommandFetchInPage(command) {
     };
   }
 
-  function readCsrfToken() {
-    let rawUserInfo;
+  async function readCsrfToken() {
+    const csrfTokenUrl = typeof command.csrfTokenUrl === "string" ? command.csrfTokenUrl.trim() : "";
+    if (!csrfTokenUrl) {
+      return {
+        ok: false,
+        reason: "missing-csrf-token-url"
+      };
+    }
+
     try {
-      rawUserInfo = localStorage.getItem("userInfo");
+      const response = await fetch(csrfTokenUrl, {
+        method: "GET",
+        credentials: "include"
+      });
+      const text = await response.text();
+      let payload;
+
+      try {
+        payload = JSON.parse(text);
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "invalid-csrf-token-response-json",
+          status: response.status,
+          statusText: response.statusText,
+          error: normalizeError(error)
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          reason: "csrf-token-request-failed",
+          status: response.status,
+          statusText: response.statusText,
+          payload
+        };
+      }
+
+      return {
+        ok: true,
+        csrfToken: JSON.stringify(payload)
+      };
     } catch (error) {
       return {
         ok: false,
-        reason: "user-info-storage-access-failed",
+        reason: "csrf-token-request-error",
         error: normalizeError(error)
       };
     }
-
-    if (!rawUserInfo) {
-      return {
-        ok: false,
-        reason: "missing-user-info"
-      };
-    }
-
-    let userInfo;
-    try {
-      userInfo = JSON.parse(rawUserInfo);
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "invalid-user-info-json",
-        error: normalizeError(error)
-      };
-    }
-
-    if (userInfo?.csrfToken === undefined || userInfo.csrfToken === null || String(userInfo.csrfToken).length === 0) {
-      return {
-        ok: false,
-        reason: "missing-csrf-token"
-      };
-    }
-
-    return {
-      ok: true,
-      csrfToken: userInfo.csrfToken
-    };
   }
 
   function normalizeHeaders(value) {

@@ -60,8 +60,9 @@ export const KEEP_ALIVE_CONFIG = {
         localStorageQueryKey: "auth-token",
         sessionStorageKey: "page-session",
         sessionStorageJsonPath: "$.client.id",
+        csrfTokenUrl: "https://example.com/api/csrf-token",
         commandHeaders: {
-          // 这里可追加固定请求头；X-hw-Csrftoken 会从 pageUrl 页面的 localStorage.userInfo.csrfToken 自动设置。
+          // 这里可追加固定请求头；X-hw-Csrftoken 会通过 csrfTokenUrl GET 获取。
           // "X-Page-Helper": "true"
         },
 

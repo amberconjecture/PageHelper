@@ -120,6 +120,7 @@ export function normalizeWebSocketConfig(target) {
     sessionStorageKey: rawConfig.sessionStorageKey ?? target.webSocketSessionStorageKey ?? "",
     sessionStorageJsonPath:
       rawConfig.sessionStorageJsonPath ?? target.webSocketSessionStorageJsonPath ?? "$",
+    csrfTokenUrl: rawConfig.csrfTokenUrl ?? target.webSocketCsrfTokenUrl ?? "",
     commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
     reconnectDelayMs: normalizeWebSocketReconnectDelayMs(rawConfig.reconnectDelayMs),
@@ -279,6 +280,7 @@ function summarizeWebSocketConfig(target) {
     localStorageQueryKey: config.localStorageQueryKey,
     sessionStorageKey: config.sessionStorageKey,
     sessionStorageJsonPath: config.sessionStorageJsonPath,
+    csrfTokenUrl: config.csrfTokenUrl,
     commandHeaders: config.commandHeaders,
     storageCheckIntervalMs: config.storageCheckIntervalMs,
     reconnectDelayMs: config.reconnectDelayMs,
