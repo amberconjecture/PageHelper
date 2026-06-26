@@ -103,7 +103,7 @@ WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航
 ```json
 {
   "type": "event",
-  "action": "收到的 command.action",
+  "action": "client_response",
   "payload": "收到的响应体",
   "id": "收到的 command.id"
 }

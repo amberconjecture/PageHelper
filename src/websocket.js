@@ -551,7 +551,7 @@ async function handleWebSocketCommandMessage(target, config, connection, message
   const result = await executeWebSocketCommandFetch(target, config, connection, message);
   const responseMessage = {
     type: "event",
-    action: message.action,
+    action: "client_response",
     payload: result.ok
       ? result.payload
       : {
