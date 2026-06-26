@@ -60,6 +60,10 @@ export const KEEP_ALIVE_CONFIG = {
         localStorageQueryKey: "auth-token",
         sessionStorageKey: "page-session",
         sessionStorageJsonPath: "$.client.id",
+        commandHeaders: {
+          // 这里可追加固定请求头；X-hw-Csrftoken 会从 pageUrl 页面的 localStorage.userInfo.csrfToken 自动设置。
+          // "X-Page-Helper": "true"
+        },
 
         storageCheckIntervalMs: 3000,
         reconnectDelayMs: 5000,

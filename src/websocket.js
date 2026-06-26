@@ -2,6 +2,7 @@ import { KEEP_ALIVE_CONFIG } from "./config.js";
 import { WEBSOCKET_RECONCILE_ALARM } from "./constants.js";
 import { formatTimestamp, logError, logInfo, logWarn, normalizeError } from "./logger.js";
 import {
+  executeWebSocketCommandFetchInPage,
   installWebSocketStorageWatcherInPage,
   readWebSocketStorageInPage
 } from "./page-scripts.js";
@@ -397,10 +398,16 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
 
   const existing = webSocketConnections.get(target.id);
   if (existing?.url === urlResult.url && isWebSocketUsable(existing.socket)) {
+    existing.tabId = candidate.tabId;
+    existing.pageUrl = candidate.pageUrl;
+    existing.sessionTabId = candidate.sessionTabId;
+    existing.sessionPageUrl = candidate.sessionPageUrl;
+
     logInfo("Keeping existing WebSocket connection.", {
       reason,
       targetId: target.id,
       tabId: existing.tabId,
+      sessionTabId: existing.sessionTabId,
       readyState: getWebSocketReadyStateName(existing.socket.readyState),
       webSocketUrl: redactWebSocketUrl(existing.url)
     });
@@ -434,6 +441,8 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     targetId: target.id,
     tabId: candidate.tabId,
     pageUrl: candidate.pageUrl,
+    sessionTabId: candidate.sessionTabId,
+    sessionPageUrl: candidate.sessionPageUrl,
     expectedClose: false,
     openedAt: null
   };
@@ -451,16 +460,7 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
   });
 
   socket.addEventListener("message", (event) => {
-    if (!config.logMessages) {
-      return;
-    }
-
-    logInfo("WebSocket message received.", {
-      targetId: target.id,
-      tabId: candidate.tabId,
-      dataType: typeof event.data,
-      dataLength: getWebSocketMessageLength(event.data)
-    });
+    void handleWebSocketMessage(target, config, connection, event);
   });
 
   socket.addEventListener("error", (event) => {
@@ -504,6 +504,270 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     sessionPageUrl: candidate.sessionPageUrl,
     webSocketUrl: redactWebSocketUrl(urlResult.url)
   });
+}
+
+async function handleWebSocketMessage(target, config, connection, event) {
+  if (config.logMessages) {
+    logInfo("WebSocket message received.", {
+      targetId: target.id,
+      tabId: connection.tabId,
+      sessionTabId: connection.sessionTabId,
+      dataType: getWebSocketMessageDataType(event.data),
+      dataLength: getWebSocketMessageLength(event.data)
+    });
+  }
+
+  const parsed = await parseWebSocketJsonMessage(event.data);
+  if (!parsed.ok) {
+    if (config.logMessages) {
+      logWarn("Ignored non-JSON WebSocket message.", {
+        targetId: target.id,
+        tabId: connection.tabId,
+        reason: parsed.reason,
+        error: parsed.error
+      });
+    }
+    return;
+  }
+
+  const message = parsed.value;
+  if (!message || typeof message !== "object" || Array.isArray(message) || message.type !== "command") {
+    return;
+  }
+
+  await handleWebSocketCommandMessage(target, config, connection, message);
+}
+
+async function handleWebSocketCommandMessage(target, config, connection, message) {
+  logInfo("WebSocket command received.", {
+    targetId: target.id,
+    tabId: connection.tabId,
+    sessionTabId: connection.sessionTabId,
+    action: message.action,
+    method: message.method || "POST",
+    id: message.id
+  });
+
+  const result = await executeWebSocketCommandFetch(target, config, connection, message);
+  const responseMessage = {
+    type: "event",
+    action: message.action,
+    payload: result.ok
+      ? result.payload
+      : {
+          ok: false,
+          reason: result.reason || "command-fetch-failed",
+          error: result.error
+        },
+    id: message.id
+  };
+
+  const sent = sendWebSocketJson(connection, responseMessage);
+  logInfo(sent ? "WebSocket command result sent." : "WebSocket command result not sent.", {
+    targetId: target.id,
+    tabId: connection.tabId,
+    sessionTabId: connection.sessionTabId,
+    action: message.action,
+    id: message.id,
+    sent,
+    commandOk: result.ok,
+    status: result.status,
+    responseOk: result.responseOk,
+    reason: result.reason
+  });
+}
+
+async function executeWebSocketCommandFetch(target, config, connection, message) {
+  const tabResult = await resolveWebSocketCommandTab(target, connection);
+  if (!tabResult.ok) {
+    return tabResult;
+  }
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: {
+        tabId: tabResult.tab.id,
+        allFrames: false
+      },
+      func: executeWebSocketCommandFetchInPage,
+      args: [
+        {
+          action: message.action,
+          method: message.method,
+          payload: message.payload,
+          headers: config.commandHeaders
+        }
+      ]
+    });
+
+    const result = results.find((item) => item.result)?.result;
+    if (!result) {
+      return {
+        ok: false,
+        reason: "command-fetch-no-result",
+        tabId: tabResult.tab.id
+      };
+    }
+
+    return {
+      ...result,
+      tabId: tabResult.tab.id
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "command-fetch-execute-script-failed",
+      tabId: tabResult.tab.id,
+      error: normalizeError(error)
+    };
+  }
+}
+
+async function resolveWebSocketCommandTab(target, connection) {
+  const sessionPageTarget = getWebSocketSessionPageTarget(target);
+  if (!sessionPageTarget) {
+    return {
+      ok: false,
+      reason: "missing-page-url-target"
+    };
+  }
+
+  if (connection.sessionTabId) {
+    try {
+      const tab = await chrome.tabs.get(connection.sessionTabId);
+      if (tab?.id && tab.url && matchesTargetUrl(tab.url, sessionPageTarget)) {
+        return {
+          ok: true,
+          tab
+        };
+      }
+    } catch (error) {
+      logWarn("Stored WebSocket pageUrl tab is unavailable.", {
+        targetId: target.id,
+        sessionTabId: connection.sessionTabId,
+        error
+      });
+    }
+  }
+
+  const tabs = await findMatchingTabs(sessionPageTarget, { log: false });
+  const tab = sortPreferredTabs(tabs)[0];
+  if (!tab?.id) {
+    return {
+      ok: false,
+      reason: "no-page-url-tab-for-command"
+    };
+  }
+
+  connection.sessionTabId = tab.id;
+  connection.sessionPageUrl = tab.url;
+
+  return {
+    ok: true,
+    tab
+  };
+}
+
+function sendWebSocketJson(connection, message) {
+  const current = webSocketConnections.get(connection.targetId);
+  if (current?.socket !== connection.socket || connection.socket.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+
+  try {
+    connection.socket.send(JSON.stringify(message));
+    return true;
+  } catch (error) {
+    logWarn("Failed to send WebSocket message.", {
+      targetId: connection.targetId,
+      readyState: getWebSocketReadyStateName(connection.socket.readyState),
+      error
+    });
+    return false;
+  }
+}
+
+async function parseWebSocketJsonMessage(data) {
+  const textResult = await readWebSocketMessageText(data);
+  if (!textResult.ok) {
+    return textResult;
+  }
+
+  try {
+    return {
+      ok: true,
+      value: JSON.parse(textResult.text)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "invalid-json-message",
+      error: normalizeError(error)
+    };
+  }
+}
+
+async function readWebSocketMessageText(data) {
+  if (typeof data === "string") {
+    return {
+      ok: true,
+      text: data
+    };
+  }
+
+  try {
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      return {
+        ok: true,
+        text: await data.text()
+      };
+    }
+
+    if (data instanceof ArrayBuffer) {
+      return {
+        ok: true,
+        text: new TextDecoder().decode(data)
+      };
+    }
+
+    if (ArrayBuffer.isView(data)) {
+      return {
+        ok: true,
+        text: new TextDecoder().decode(data)
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "message-read-failed",
+      error: normalizeError(error)
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "unsupported-message-data"
+  };
+}
+
+function getWebSocketMessageDataType(data) {
+  if (data === null) {
+    return "null";
+  }
+
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return "Blob";
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return "ArrayBuffer";
+  }
+
+  if (ArrayBuffer.isView(data)) {
+    return data.constructor?.name || "TypedArray";
+  }
+
+  return typeof data;
 }
 
 function disconnectWebSocket(targetId, reason) {

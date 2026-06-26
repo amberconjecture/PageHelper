@@ -157,6 +157,196 @@ export function readWebSocketStorageInPage(config) {
   return result;
 }
 
+export async function executeWebSocketCommandFetchInPage(command) {
+  const action = typeof command.action === "string" ? command.action.trim() : "";
+  if (!action) {
+    return {
+      ok: false,
+      reason: "missing-command-action",
+      href: location.href,
+      title: document.title
+    };
+  }
+
+  const method = String(command.method || "POST").trim().toUpperCase();
+  if (!method) {
+    return {
+      ok: false,
+      reason: "missing-command-method",
+      href: location.href,
+      title: document.title
+    };
+  }
+
+  const csrfResult = readCsrfToken();
+  if (!csrfResult.ok) {
+    return {
+      ok: false,
+      reason: csrfResult.reason,
+      href: location.href,
+      title: document.title,
+      error: csrfResult.error
+    };
+  }
+
+  const headers = normalizeHeaders(command.headers);
+  const payload = command.payload;
+  let body;
+
+  if (payload !== undefined) {
+    if (method === "GET" || method === "HEAD") {
+      return {
+        ok: false,
+        reason: "method-does-not-support-body",
+        href: location.href,
+        title: document.title,
+        method
+      };
+    }
+
+    if (typeof payload === "string") {
+      body = payload;
+    } else {
+      body = JSON.stringify(payload);
+      if (!hasHeader(headers, "content-type")) {
+        headers["Content-Type"] = "application/json";
+      }
+    }
+  }
+
+  setHeader(headers, "X-hw-Csrftoken", String(csrfResult.csrfToken));
+
+  try {
+    const response = await fetch(action, {
+      method,
+      headers,
+      body,
+      credentials: "include"
+    });
+    const text = await response.text();
+
+    return {
+      ok: true,
+      href: location.href,
+      title: document.title,
+      status: response.status,
+      statusText: response.statusText,
+      responseOk: response.ok,
+      payload: parseResponseBody(text, response.headers.get("content-type"))
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "fetch-failed",
+      href: location.href,
+      title: document.title,
+      error: normalizeError(error)
+    };
+  }
+
+  function readCsrfToken() {
+    let rawUserInfo;
+    try {
+      rawUserInfo = localStorage.getItem("userInfo");
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "user-info-storage-access-failed",
+        error: normalizeError(error)
+      };
+    }
+
+    if (!rawUserInfo) {
+      return {
+        ok: false,
+        reason: "missing-user-info"
+      };
+    }
+
+    let userInfo;
+    try {
+      userInfo = JSON.parse(rawUserInfo);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "invalid-user-info-json",
+        error: normalizeError(error)
+      };
+    }
+
+    if (userInfo?.csrfToken === undefined || userInfo.csrfToken === null || String(userInfo.csrfToken).length === 0) {
+      return {
+        ok: false,
+        reason: "missing-csrf-token"
+      };
+    }
+
+    return {
+      ok: true,
+      csrfToken: userInfo.csrfToken
+    };
+  }
+
+  function normalizeHeaders(value) {
+    const normalized = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return normalized;
+    }
+
+    for (const [key, headerValue] of Object.entries(value)) {
+      const headerName = String(key || "").trim();
+      if (!headerName || headerValue === undefined || headerValue === null) {
+        continue;
+      }
+
+      normalized[headerName] = String(headerValue);
+    }
+
+    return normalized;
+  }
+
+  function hasHeader(headers, headerName) {
+    const expected = headerName.toLowerCase();
+    return Object.keys(headers).some((key) => key.toLowerCase() === expected);
+  }
+
+  function setHeader(headers, headerName, headerValue) {
+    const expected = headerName.toLowerCase();
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === expected && key !== headerName) {
+        delete headers[key];
+      }
+    }
+
+    headers[headerName] = headerValue;
+  }
+
+  function parseResponseBody(text, contentType) {
+    if (!text) {
+      return null;
+    }
+
+    const normalizedContentType = String(contentType || "").toLowerCase();
+    if (!normalizedContentType.includes("application/json") && !normalizedContentType.includes("+json")) {
+      return text;
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  function normalizeError(error) {
+    return {
+      name: error?.name,
+      message: error?.message,
+      stack: error?.stack
+    };
+  }
+}
+
 export function installWebSocketStorageWatcherInPage(config) {
   const registryKey = "__pagehelper_websocket_storage_watchers__";
   const registry = window[registryKey] || {};

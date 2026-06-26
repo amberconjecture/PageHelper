@@ -43,7 +43,10 @@ export const KEEP_ALIVE_CONFIG = {
         localStorageKey: "auth-token",
         localStorageQueryKey: "auth-token",
         sessionStorageKey: "page-session",
-        sessionStorageJsonPath: "$.client.id"
+        sessionStorageJsonPath: "$.client.id",
+        commandHeaders: {
+          "X-Page-Helper": "true"
+        }
       }
     }
   ]
@@ -76,6 +79,7 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.localStorageQueryKey`：追加到 WebSocket URL 上的 query key；未配置时等于 `localStorageKey`。
 - `webSocket.sessionStorageKey`：顶层 `pageUrl` 页面 `sessionStorage` 中保存 client 信息的 key。
 - `webSocket.sessionStorageJsonPath`：从 `pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 这段 JSON 里提取 `client_id` 的路径，例如 `$.client.id`、`user.clients[0].id`。最终 query key 固定为 `client_id`。
+- `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象；`X-hw-Csrftoken` 会从该页面 `localStorage.userInfo` JSON 的 `csrfToken` 字段自动设置。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
@@ -83,6 +87,25 @@ export const KEEP_ALIVE_CONFIG = {
 WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，且 TargetUrl 页面的 `localStorage[localStorageKey]` 有值、`pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
 
 WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航离开后，扩展会主动断开连接。若 token 或 client_id 发生变化，扩展会用新的 query 重建连接。
+
+### WebSocket command 消息
+
+服务端发送 JSON 消息且 `type` 为 `command` 时，扩展会在当前匹配的 `pageUrl` 标签页内发起 fetch：
+
+- `action`：作为 fetch URL。
+- `payload`：作为 fetch 请求体；对象会序列化为 JSON 字符串。
+- `method`：作为 fetch method；未提供时默认为 `POST`。
+
+请求头会包含 `X-hw-Csrftoken`，值来自 `pageUrl` 页面 `localStorage.userInfo` JSON 中的 `csrfToken` 字段，并会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
+
+```json
+{
+  "type": "event",
+  "action": "收到的 command.action",
+  "payload": "收到的响应体",
+  "id": "收到的 command.id"
+}
+```
 
 ## 查看日志
 

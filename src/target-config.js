@@ -120,6 +120,7 @@ export function normalizeWebSocketConfig(target) {
     sessionStorageKey: rawConfig.sessionStorageKey ?? target.webSocketSessionStorageKey ?? "",
     sessionStorageJsonPath:
       rawConfig.sessionStorageJsonPath ?? target.webSocketSessionStorageJsonPath ?? "$",
+    commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
     reconnectDelayMs: normalizeWebSocketReconnectDelayMs(rawConfig.reconnectDelayMs),
     logMessages: rawConfig.logMessages === true
@@ -162,6 +163,19 @@ function getWebSocketArrayConfig(rawConfig, target, rawKeys, topLevelKey) {
   }
 
   return null;
+}
+
+function normalizeHeaderMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, headerValue]) => [String(key || "").trim(), headerValue])
+      .filter(([key, headerValue]) => key && headerValue !== undefined && headerValue !== null)
+      .map(([key, headerValue]) => [key, String(headerValue)])
+  );
 }
 
 export function shouldOpenIfMissing(target) {
@@ -265,6 +279,7 @@ function summarizeWebSocketConfig(target) {
     localStorageQueryKey: config.localStorageQueryKey,
     sessionStorageKey: config.sessionStorageKey,
     sessionStorageJsonPath: config.sessionStorageJsonPath,
+    commandHeaders: config.commandHeaders,
     storageCheckIntervalMs: config.storageCheckIntervalMs,
     reconnectDelayMs: config.reconnectDelayMs,
     logMessages: config.logMessages
