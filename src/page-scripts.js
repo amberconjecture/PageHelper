@@ -281,10 +281,51 @@ export async function executeWebSocketCommandFetchInPage(command) {
       };
     }
 
+    const decodedToken = decodeCsrfToken(userInfo.csrfToken);
+    if (!decodedToken.ok) {
+      return decodedToken;
+    }
+
     return {
       ok: true,
-      csrfToken: userInfo.csrfToken
+      csrfToken: decodedToken.value
     };
+  }
+
+  function decodeCsrfToken(rawToken) {
+    const token = String(rawToken);
+    const separatorIndex = token.indexOf(":");
+    const encodedToken = (separatorIndex === -1 ? token : token.slice(separatorIndex + 1)).trim();
+    if (!encodedToken) {
+      return {
+        ok: false,
+        reason: "missing-csrf-token-base64"
+      };
+    }
+
+    try {
+      const normalizedToken = normalizeBase64(encodedToken);
+      const binary = atob(normalizedToken);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const value = new TextDecoder().decode(bytes);
+
+      return {
+        ok: true,
+        value
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "invalid-csrf-token-base64",
+        error: normalizeError(error)
+      };
+    }
+  }
+
+  function normalizeBase64(value) {
+    const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/").replace(/\s/g, "");
+    const paddingLength = (4 - (normalized.length % 4)) % 4;
+    return normalized + "=".repeat(paddingLength);
   }
 
   function normalizeHeaders(value) {
