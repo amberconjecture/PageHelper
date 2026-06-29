@@ -3,6 +3,7 @@
   "name": "Page Helper",
   "description": "Developer-configured browser page automation helpers.",
   "version": "0.1.0",
+  "update_url": "https://your-internal-server.com/extension/page-helper/update.xml",
   "permissions": ["alarms", "scripting", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {

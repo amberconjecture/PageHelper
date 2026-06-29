@@ -12,6 +12,65 @@
 
 每次修改 `src/config.js` 或其它扩展源码后，都需要回到 `chrome://extensions/`，点击这个扩展卡片上的「重新加载」。重新加载后，扩展会在后台日志里打印当前读取到的目标、定时器和下一次执行时间。
 
+## 内网自动更新
+
+当前 `manifest.json` 已配置 `update_url`，默认指向：
+
+```json
+"update_url": "https://your-internal-server.com/extension/page-helper/update.xml"
+```
+
+发布前请把它改成你自己的内网静态服务地址。Chrome 会定期请求这个 XML 更新清单；当清单里的 `version` 高于本机已安装版本时，会下载并安装 `codebase` 指向的 `.crx`。
+
+自动更新只适用于已安装的 `.crx` 扩展；开发者模式下「加载已解压的扩展程序」不会走这套更新机制。自托管 CRX 的安装/静默分发还受平台和 Chrome 企业策略影响，面向 Windows/macOS 批量分发前请先用目标管理策略验证安装通道。
+
+### 打包 CRX
+
+首次打包会生成固定插件 ID 所需的私钥：
+
+```bash
+./scripts/pack-crx.sh
+```
+
+脚本会把发布内容复制到 `dist/page-helper/`，调用 Chrome 打包，并把首次生成的私钥保存到 `private/page-helper.pem`。这个 `.pem` 决定扩展 ID，后续每次更新都必须继续使用同一个文件。`private/`、`.pem` 和 `.crx` 已加入 `.gitignore`，不要提交到仓库。
+
+如果私钥放在其它路径，可以显式传入：
+
+```bash
+./scripts/pack-crx.sh /secure/path/page-helper.pem
+```
+
+每次发布新版本前，先递增 `manifest.json` 里的 `version`，再重新执行打包脚本。生成的文件名类似：
+
+```text
+dist/page-helper-0.1.0.crx
+```
+
+### 生成 update.xml
+
+打包完成后，到 `chrome://extensions/` 查看这个 CRX 安装后的扩展 ID，然后生成更新清单：
+
+```bash
+./scripts/generate-update-xml.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://your-internal-server.com/extension/page-helper-0.1.0.crx
+```
+
+这会生成 `deploy/update.xml`。你也可以参考 `deploy/update.xml.example` 手动维护：
+
+```xml
+<?xml version='1.0' encoding='UTF-8'?>
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <app appid='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'>
+    <updatecheck codebase='https://your-internal-server.com/extension/page-helper-0.1.0.crx' version='0.1.0' />
+  </app>
+</gupdate>
+```
+
+把 `update.xml` 和对应的 `.crx` 上传到内网静态文件服务即可。以后升级只需要递增版本号、复用同一个 `.pem` 重新打包、上传新 `.crx`，并更新 XML 里的 `version` 与 `codebase`。
+
+静态服务建议为 `.crx` 返回 `Content-Type: application/x-chrome-extension`。如果响应带有 `X-Content-Type-Options: nosniff`，但 `Content-Type` 又不是 Chrome 认可的类型，安装或更新可能会失败。
+
+注意：Chrome 请求自动更新清单时不会携带 Cookie，也会忽略响应里的 `Set-Cookie`。如果内网服务需要访问控制，建议用网络/VPN、防火墙或其它不依赖浏览器 Cookie 的方式处理。
+
 ## 配置示例
 
 ```js
