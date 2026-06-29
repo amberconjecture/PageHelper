@@ -71,6 +71,27 @@ dist/page-helper-0.1.0.crx
 
 注意：Chrome 请求自动更新清单时不会携带 Cookie，也会忽略响应里的 `Set-Cookie`。如果内网服务需要访问控制，建议用网络/VPN、防火墙或其它不依赖浏览器 Cookie 的方式处理。
 
+### Windows 一键安装
+
+Windows 可以通过 Chrome 企业策略强制安装这个扩展。生成可双击导入的注册表文件：
+
+```bash
+./scripts/generate-windows-force-install-reg.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://your-internal-server.com/extension/page-helper/update.xml
+```
+
+这会生成 `deploy/windows-install-force.reg`，内容类似：
+
+```reg
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist]
+"1"="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;https://your-internal-server.com/extension/page-helper/update.xml"
+```
+
+把这个 `.reg` 文件发给 Windows 用户后，用户双击或右键「合并」即可写入策略。由于写入的是 `HKEY_LOCAL_MACHINE`，普通用户没有权限时会弹出 UAC 或导入失败。导入后重启 Chrome，或打开 `chrome://policy` 点击「重新加载政策」，即可触发安装。
+
+注意：这是企业策略安装方式，Chrome 会把浏览器标记为“由贵单位管理”。Google 官方文档说明，自动安装非 Chrome Web Store 扩展时，Windows 设备通常需要处于 Active Directory 域或其它企业管理通道下；面向普通个人电脑分发前请先在目标环境验证。
+
 ## 配置示例
 
 ```js

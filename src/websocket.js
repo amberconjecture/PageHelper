@@ -843,6 +843,16 @@ async function executeWebSocketCommandFetch(target, config, connection, message)
     return tabResult;
   }
 
+  const command = {
+    action: message.action,
+    method: message.method,
+    csrfTokenUrl: config.csrfTokenUrl,
+    headers: config.commandHeaders
+  };
+  if (methodSupportsRequestBody(message.method)) {
+    command.payload = message.payload;
+  }
+
   try {
     const results = await chrome.scripting.executeScript({
       target: {
@@ -851,15 +861,7 @@ async function executeWebSocketCommandFetch(target, config, connection, message)
       },
       world: "MAIN",
       func: executeWebSocketCommandFetchInPage,
-      args: [
-        {
-          action: message.action,
-          method: message.method,
-          payload: message.payload,
-          csrfTokenUrl: config.csrfTokenUrl,
-          headers: config.commandHeaders
-        }
-      ]
+      args: [command]
     });
 
     const result = results.find((item) => item.result)?.result;
@@ -883,6 +885,11 @@ async function executeWebSocketCommandFetch(target, config, connection, message)
       error: normalizeError(error)
     };
   }
+}
+
+function methodSupportsRequestBody(method) {
+  const normalizedMethod = String(method || "POST").trim().toUpperCase();
+  return normalizedMethod !== "GET" && normalizedMethod !== "HEAD";
 }
 
 async function resolveWebSocketCommandTab(target, connection) {

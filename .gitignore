@@ -7,3 +7,4 @@ private/
 *.crx
 *.pem
 deploy/update.xml
+deploy/windows-install-force.reg

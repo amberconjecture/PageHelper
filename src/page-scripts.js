@@ -190,23 +190,14 @@ export async function executeWebSocketCommandFetchInPage(command) {
   }
 
   const headers = normalizeHeaders(command.headers);
-  const payload = command.payload;
+  const supportsBody = method !== "GET" && method !== "HEAD";
   let body;
 
-  if (payload !== undefined) {
-    if (method === "GET" || method === "HEAD") {
-      return {
-        ok: false,
-        reason: "method-does-not-support-body",
-        href: location.href,
-        title: document.title,
-        method
-      };
-    }
-
+  if (supportsBody) {
+    const payload = command.payload;
     if (typeof payload === "string") {
       body = payload;
-    } else {
+    } else if (payload !== undefined) {
       body = JSON.stringify(payload);
       if (!hasHeader(headers, "content-type")) {
         headers["Content-Type"] = "application/json";
@@ -217,12 +208,16 @@ export async function executeWebSocketCommandFetchInPage(command) {
   setHeader(headers, "X-hw-Csrftoken", String(csrfResult.csrfToken));
 
   try {
-    const response = await fetch(action, {
+    const fetchOptions = {
       method,
       headers,
-      body,
       credentials: "include"
-    });
+    };
+    if (body !== undefined) {
+      fetchOptions.body = body;
+    }
+
+    const response = await fetch(action, fetchOptions);
     const text = await response.text();
 
     return {
