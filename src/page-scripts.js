@@ -185,7 +185,22 @@ export async function executeWebSocketCommandFetchInPage(command) {
       reason: csrfResult.reason,
       href: location.href,
       title: document.title,
+      status: csrfResult.status,
+      statusText: csrfResult.statusText,
       error: csrfResult.error
+    };
+  }
+
+  const gpmpCsrfResult = await readGpmpCsrfToken();
+  if (!gpmpCsrfResult.ok) {
+    return {
+      ok: false,
+      reason: gpmpCsrfResult.reason,
+      href: location.href,
+      title: document.title,
+      status: gpmpCsrfResult.status,
+      statusText: gpmpCsrfResult.statusText,
+      error: gpmpCsrfResult.error
     };
   }
 
@@ -206,6 +221,7 @@ export async function executeWebSocketCommandFetchInPage(command) {
   }
 
   setHeader(headers, "X-hw-Csrftoken", String(csrfResult.csrfToken));
+  setHeader(headers, "X-Session-Csrf-Token", String(gpmpCsrfResult.csrfToken));
 
   try {
     const fetchOptions = {
@@ -240,7 +256,7 @@ export async function executeWebSocketCommandFetchInPage(command) {
   }
 
   async function readCsrfToken() {
-    const csrfTokenUrl = typeof command.csrfTokenUrl === "string" ? command.csrfTokenUrl.trim() : "";
+    const csrfTokenUrl = getConfiguredString(command.csrfTokenUrl);
     if (!csrfTokenUrl) {
       return {
         ok: false,
@@ -288,6 +304,84 @@ export async function executeWebSocketCommandFetchInPage(command) {
         reason: "csrf-token-request-error",
         error: normalizeError(error)
       };
+    }
+  }
+
+  async function readGpmpCsrfToken() {
+    const gpmpCsrfTokenUrl = getConfiguredString(command.gpmpCsrfTokenUrl);
+    if (!gpmpCsrfTokenUrl) {
+      return {
+        ok: false,
+        reason: "missing-gpmp-csrf-token-url"
+      };
+    }
+
+    try {
+      const response = await fetch(gpmpCsrfTokenUrl, {
+        method: "GET",
+        credentials: "include"
+      });
+      const text = await response.text();
+      const payload = parseResponseBody(text, response.headers.get("content-type"));
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          reason: "gpmp-csrf-token-request-failed",
+          status: response.status,
+          statusText: response.statusText,
+          payload
+        };
+      }
+
+      const csrfToken = readCookieValue("gpmp-csrfToken");
+      if (!csrfToken) {
+        return {
+          ok: false,
+          reason: "missing-gpmp-csrf-token-cookie",
+          status: response.status,
+          statusText: response.statusText,
+          payload
+        };
+      }
+
+      return {
+        ok: true,
+        csrfToken
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "gpmp-csrf-token-request-error",
+        error: normalizeError(error)
+      };
+    }
+  }
+
+  function getConfiguredString(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function readCookieValue(cookieName) {
+    const expectedPrefix = `${cookieName}=`;
+    const cookieItems = document.cookie ? document.cookie.split(";") : [];
+    for (const item of cookieItems) {
+      const cookie = item.trim();
+      if (!cookie.startsWith(expectedPrefix)) {
+        continue;
+      }
+
+      return decodeCookieValue(cookie.slice(expectedPrefix.length));
+    }
+
+    return "";
+  }
+
+  function decodeCookieValue(value) {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
     }
   }
 

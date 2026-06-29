@@ -847,6 +847,7 @@ async function executeWebSocketCommandFetch(target, config, connection, message)
     action: message.action,
     method: message.method,
     csrfTokenUrl: config.csrfTokenUrl,
+    gpmpCsrfTokenUrl: config.gpmpCsrfTokenUrl,
     headers: config.commandHeaders
   };
   if (methodSupportsRequestBody(message.method)) {

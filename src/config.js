@@ -61,8 +61,10 @@ export const KEEP_ALIVE_CONFIG = {
         sessionStorageKey: "page-session",
         sessionStorageJsonPath: "$.client.id",
         csrfTokenUrl: "https://example.com/api/csrf-token",
+        gpmpCsrfTokenUrl: "https://example.com/api/gpmp-csrf-token",
         commandHeaders: {
           // 这里可追加固定请求头；X-hw-Csrftoken 会通过 csrfTokenUrl GET 获取。
+          // X-Session-Csrf-Token 会通过 gpmpCsrfTokenUrl GET 后读取 gpmp-csrfToken cookie 获取。
           // "X-Page-Helper": "true"
         },
 

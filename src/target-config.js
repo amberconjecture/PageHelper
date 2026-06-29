@@ -106,6 +106,10 @@ export function normalizeInjectionTarget(target) {
 export function normalizeWebSocketConfig(target) {
   const rawConfig = target.webSocket || {};
   const localStorageKey = rawConfig.localStorageKey ?? target.webSocketLocalStorageKey ?? "auth-token";
+  const gpmpCsrfTokenUrl =
+    rawConfig.gpmpCsrfTokenUrl ??
+    target.webSocketGpmpCsrfTokenUrl ??
+    "";
 
   return {
     targetId: target.id,
@@ -120,6 +124,7 @@ export function normalizeWebSocketConfig(target) {
     sessionStorageKey: rawConfig.sessionStorageKey ?? target.webSocketSessionStorageKey ?? "",
     sessionStorageJsonPath:
       rawConfig.sessionStorageJsonPath ?? target.webSocketSessionStorageJsonPath ?? "$",
+    gpmpCsrfTokenUrl,
     csrfTokenUrl: rawConfig.csrfTokenUrl ?? target.webSocketCsrfTokenUrl ?? "",
     commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
@@ -281,6 +286,7 @@ function summarizeWebSocketConfig(target) {
     sessionStorageKey: config.sessionStorageKey,
     sessionStorageJsonPath: config.sessionStorageJsonPath,
     csrfTokenUrl: config.csrfTokenUrl,
+    gpmpCsrfTokenUrl: config.gpmpCsrfTokenUrl,
     commandHeaders: config.commandHeaders,
     storageCheckIntervalMs: config.storageCheckIntervalMs,
     reconnectDelayMs: config.reconnectDelayMs,
