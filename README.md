@@ -86,7 +86,7 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
 
-WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，就会检查 `pageUrl` 页面是否已打开；如果未打开，会主动拉起一个 `pageUrl` 页面。随后只要 TargetUrl 页面的 `localStorage[localStorageKey]` 有值、`pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
+WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，就会检查 `pageUrl` 页面是否已打开；如果未打开，会主动拉起一个 `pageUrl` 页面。扩展会记住自己拉起的 tab，如果该页面跳转到登录页等非 `pageUrl` 地址，只要这个 tab 还存在，就不会重复拉起新的 `pageUrl`。随后只要 TargetUrl 页面的 `localStorage[localStorageKey]` 有值、`pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
 
 WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航离开后，扩展会主动断开连接。若 token 或 client_id 发生变化，扩展会用新的 query 重建连接。
 

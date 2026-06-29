@@ -1,5 +1,6 @@
 export const ALARM_PREFIX = "pagehelper.keepAlive.";
 export const WEBSOCKET_RECONCILE_ALARM = "pagehelper.webSocket.reconcile";
+export const WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY = "pagehelper.webSocket.sessionPageTabs";
 
 export const DEFAULT_INTERVAL_MINUTES = 50;
 export const MIN_INTERVAL_MINUTES = 1;

@@ -1,5 +1,5 @@
 import { KEEP_ALIVE_CONFIG } from "./config.js";
-import { WEBSOCKET_RECONCILE_ALARM } from "./constants.js";
+import { WEBSOCKET_RECONCILE_ALARM, WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY } from "./constants.js";
 import { formatTimestamp, logError, logInfo, logWarn, normalizeError } from "./logger.js";
 import {
   executeWebSocketCommandFetchInPage,
@@ -41,6 +41,7 @@ import {
 const webSocketConnections = new Map();
 const webSocketReconnectTimers = new Map();
 const webSocketSessionPageOpenPromises = new Map();
+const webSocketSessionPageTabRecords = new Map();
 
 export function isWebSocketReconcileAlarm(alarm) {
   return alarm.name === WEBSOCKET_RECONCILE_ALARM;
@@ -121,6 +122,8 @@ export async function reconcileWebSockets(reason) {
     }
   }
 
+  await clearDisabledWebSocketSessionPageTabRecords(enabledTargetIds);
+
   if (!targets.length) {
     return;
   }
@@ -188,6 +191,24 @@ async function openWebSocketSessionPageIfMissing(target, sessionPageTarget, reas
     return [];
   }
 
+  const recordedTab = await getRecordedWebSocketSessionPageTab(target);
+  if (recordedTab) {
+    if (recordedTab.url && matchesTargetUrl(recordedTab.url, sessionPageTarget)) {
+      return [recordedTab];
+    }
+
+    logInfo("Skipping WebSocket pageUrl open because the previously opened tab is still alive.", {
+      reason,
+      targetId: target.id,
+      tabId: recordedTab.id,
+      currentUrl: recordedTab.url,
+      status: recordedTab.status,
+      pageUrl: target.pageUrl
+    });
+
+    return [];
+  }
+
   const existingOpenPromise = webSocketSessionPageOpenPromises.get(target.id);
   if (existingOpenPromise) {
     logInfo("Waiting for existing WebSocket pageUrl open.", {
@@ -227,6 +248,7 @@ async function openWebSocketSessionPage(target, reason) {
       url: target.pageUrl,
       active: target.activeWhenOpened !== false
     });
+    await rememberWebSocketSessionPageTab(target, createdTab);
 
     await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
     await showWebSocketLoginPrompt(createdTab, target);
@@ -245,6 +267,144 @@ async function openWebSocketSessionPage(target, reason) {
       error
     });
   }
+}
+
+async function getRecordedWebSocketSessionPageTab(target) {
+  const record = await readWebSocketSessionPageTabRecord(target.id);
+  if (!record?.tabId) {
+    return null;
+  }
+
+  if (record.pageUrl !== target.pageUrl) {
+    await forgetWebSocketSessionPageTab(target.id);
+    return null;
+  }
+
+  try {
+    const tab = await chrome.tabs.get(record.tabId);
+    if (!tab?.id) {
+      await forgetWebSocketSessionPageTab(target.id);
+      return null;
+    }
+
+    return tab;
+  } catch (error) {
+    await forgetWebSocketSessionPageTab(target.id);
+    logInfo("Previously opened WebSocket pageUrl tab is gone.", {
+      targetId: target.id,
+      tabId: record.tabId,
+      pageUrl: record.pageUrl,
+      error: normalizeError(error)
+    });
+    return null;
+  }
+}
+
+async function rememberWebSocketSessionPageTab(target, tab) {
+  if (!tab?.id) {
+    return;
+  }
+
+  const record = {
+    tabId: tab.id,
+    pageUrl: target.pageUrl,
+    openedAt: Date.now()
+  };
+  webSocketSessionPageTabRecords.set(target.id, record);
+
+  try {
+    const records = await readStoredWebSocketSessionPageTabRecords();
+    records[target.id] = record;
+    await chrome.storage.local.set({
+      [WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY]: records
+    });
+  } catch (error) {
+    logWarn("Could not persist opened WebSocket pageUrl tab.", {
+      targetId: target.id,
+      tabId: tab.id,
+      pageUrl: target.pageUrl,
+      error
+    });
+  }
+}
+
+async function readWebSocketSessionPageTabRecord(targetId) {
+  if (webSocketSessionPageTabRecords.has(targetId)) {
+    return webSocketSessionPageTabRecords.get(targetId);
+  }
+
+  try {
+    const records = await readStoredWebSocketSessionPageTabRecords();
+    const record = records[targetId] || null;
+    if (record) {
+      webSocketSessionPageTabRecords.set(targetId, record);
+    }
+    return record;
+  } catch (error) {
+    logWarn("Could not read persisted WebSocket pageUrl tab.", {
+      targetId,
+      error
+    });
+    return null;
+  }
+}
+
+async function forgetWebSocketSessionPageTab(targetId) {
+  webSocketSessionPageTabRecords.delete(targetId);
+
+  try {
+    const records = await readStoredWebSocketSessionPageTabRecords();
+    if (!records[targetId]) {
+      return;
+    }
+
+    delete records[targetId];
+    await chrome.storage.local.set({
+      [WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY]: records
+    });
+  } catch (error) {
+    logWarn("Could not clear persisted WebSocket pageUrl tab.", {
+      targetId,
+      error
+    });
+  }
+}
+
+async function clearDisabledWebSocketSessionPageTabRecords(enabledTargetIds) {
+  try {
+    const records = await readStoredWebSocketSessionPageTabRecords();
+    let changed = false;
+
+    for (const targetId of Object.keys(records)) {
+      if (enabledTargetIds.has(targetId)) {
+        continue;
+      }
+
+      changed = true;
+      webSocketSessionPageTabRecords.delete(targetId);
+      delete records[targetId];
+    }
+
+    if (changed) {
+      await chrome.storage.local.set({
+        [WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY]: records
+      });
+    }
+  } catch (error) {
+    logWarn("Could not clear disabled WebSocket pageUrl tab records.", {
+      error
+    });
+  }
+}
+
+async function readStoredWebSocketSessionPageTabRecords() {
+  const stored = await chrome.storage.local.get(WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY);
+  const records = stored[WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY];
+  if (!records || typeof records !== "object" || Array.isArray(records)) {
+    return {};
+  }
+
+  return { ...records };
 }
 
 async function showWebSocketLoginPrompt(tab, target) {
