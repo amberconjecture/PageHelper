@@ -334,16 +334,18 @@ export async function executeWebSocketCommandFetchInPage(command) {
         };
       }
 
-      const csrfToken = readCookieValue("gpmp-csrfToken");
+      const csrfToken = extractGpmpCsrfToken(payload);
       if (!csrfToken) {
         return {
           ok: false,
-          reason: "missing-gpmp-csrf-token-cookie",
+          reason: "missing-gpmp-csrf-token-response",
           status: response.status,
           statusText: response.statusText,
           payload
         };
       }
+
+      writeCookieValue("gpmp-csrfToken", csrfToken);
 
       return {
         ok: true,
@@ -362,27 +364,21 @@ export async function executeWebSocketCommandFetchInPage(command) {
     return typeof value === "string" ? value.trim() : "";
   }
 
-  function readCookieValue(cookieName) {
-    const expectedPrefix = `${cookieName}=`;
-    const cookieItems = document.cookie ? document.cookie.split(";") : [];
-    for (const item of cookieItems) {
-      const cookie = item.trim();
-      if (!cookie.startsWith(expectedPrefix)) {
-        continue;
-      }
-
-      return decodeCookieValue(cookie.slice(expectedPrefix.length));
+  function extractGpmpCsrfToken(payload) {
+    if (typeof payload === "string") {
+      return payload.trim();
     }
 
-    return "";
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return "";
+    }
+
+    return getConfiguredString(payload.csrfToken);
   }
 
-  function decodeCookieValue(value) {
-    try {
-      return decodeURIComponent(value);
-    } catch {
-      return value;
-    }
+  function writeCookieValue(cookieName, value) {
+    const secureAttribute = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `${cookieName}=${encodeURIComponent(value)}; Path=/; SameSite=Lax${secureAttribute}`;
   }
 
   function normalizeHeaders(value) {

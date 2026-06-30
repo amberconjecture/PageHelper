@@ -162,7 +162,7 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.sessionStorageKey`：顶层 `pageUrl` 页面 `sessionStorage` 中保存 client 信息的 key。
 - `webSocket.sessionStorageJsonPath`：从 `pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 这段 JSON 里提取 `client_id` 的路径，例如 `$.client.id`、`user.clients[0].id`。最终 query key 固定为 `client_id`。
 - `webSocket.csrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内先用 `GET` 调用这个接口；接口返回的完整 JSON 会被序列化后写入请求头 `X-hw-Csrftoken`。
-- `webSocket.gpmpCsrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内用 `GET` 调用这个新增接口，并带上页面 cookie。接口完成后应让当前域名下可读取到 `gpmp-csrfToken` cookie；扩展会读取这个 cookie 值并写入请求头 `X-Session-Csrf-Token`。
+- `webSocket.gpmpCsrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内用 `GET` 调用这个新增接口，并带上页面 cookie。扩展会从接口响应中获取 `csrfToken`，写入当前域名的 `gpmp-csrfToken` cookie，并写入请求头 `X-Session-Csrf-Token`。
 - `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
@@ -180,7 +180,7 @@ WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航
 - `payload`：作为 fetch 请求体；对象会序列化为 JSON 字符串。
 - `method`：作为 fetch method；未提供时默认为 `POST`。
 
-请求前会先在 `pageUrl` 页面内用 `GET` 调用 `webSocket.csrfTokenUrl`，将接口返回的完整 JSON 用 `JSON.stringify` 后放入 `X-hw-Csrftoken` 请求头；随后调用 `webSocket.gpmpCsrfTokenUrl`，从当前域名的 `gpmp-csrfToken` cookie 读取 token，放入 `X-Session-Csrf-Token` 请求头。最终请求会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
+请求前会先在 `pageUrl` 页面内用 `GET` 调用 `webSocket.csrfTokenUrl`，将接口返回的完整 JSON 用 `JSON.stringify` 后放入 `X-hw-Csrftoken` 请求头；随后调用 `webSocket.gpmpCsrfTokenUrl`，从接口响应中取出 `csrfToken`，写入当前域名的 `gpmp-csrfToken` cookie，并放入 `X-Session-Csrf-Token` 请求头。最终请求会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
 
 ```json
 {
