@@ -6,6 +6,7 @@ export const KEEP_ALIVE_CONFIG = {
   defaultWebSocketStorageCheckIntervalMs: 3000,
   defaultWebSocketReconnectDelayMs: 5000,
   defaultWebSocketReconcileIntervalMinutes: 1,
+  defaultWebSocketKeepAliveIntervalMs: 20000,
 
   targets: [
     {
@@ -70,6 +71,10 @@ export const KEEP_ALIVE_CONFIG = {
 
         storageCheckIntervalMs: 3000,
         reconnectDelayMs: 5000,
+        keepAliveIntervalMs: 20000,
+        keepAliveMessage: {
+          type: "pagehelper.keepalive"
+        },
         logMessages: false
       }
     }

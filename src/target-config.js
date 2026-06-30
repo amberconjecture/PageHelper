@@ -2,10 +2,13 @@ import { KEEP_ALIVE_CONFIG } from "./config.js";
 import {
   DEFAULT_INTERVAL_MINUTES,
   DEFAULT_WAIT_FOR_SELECTOR_MS,
+  DEFAULT_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS,
   DEFAULT_WEBSOCKET_RECONNECT_DELAY_MS,
   DEFAULT_WEBSOCKET_RECONCILE_INTERVAL_MINUTES,
   DEFAULT_WEBSOCKET_STORAGE_CHECK_INTERVAL_MS,
-  MIN_INTERVAL_MINUTES
+  MAX_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS,
+  MIN_INTERVAL_MINUTES,
+  MIN_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS
 } from "./constants.js";
 import { logWarn } from "./logger.js";
 import { hasOwn, normalizeArray } from "./utils.js";
@@ -129,6 +132,12 @@ export function normalizeWebSocketConfig(target) {
     commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
     reconnectDelayMs: normalizeWebSocketReconnectDelayMs(rawConfig.reconnectDelayMs),
+    keepAliveIntervalMs: normalizeWebSocketKeepAliveIntervalMs(
+      rawConfig.keepAliveIntervalMs ?? target.webSocketKeepAliveIntervalMs
+    ),
+    keepAliveMessage: normalizeWebSocketKeepAliveMessage(
+      rawConfig.keepAliveMessage ?? target.webSocketKeepAliveMessage
+    ),
     logMessages: rawConfig.logMessages === true
   };
 }
@@ -237,6 +246,52 @@ export function normalizeWebSocketReconnectDelayMs(value) {
   return Math.max(1000, delay);
 }
 
+export function normalizeWebSocketKeepAliveIntervalMs(value) {
+  if (value === false || value === 0) {
+    return 0;
+  }
+
+  const interval = Number(
+    value ??
+      KEEP_ALIVE_CONFIG.defaultWebSocketKeepAliveIntervalMs ??
+      DEFAULT_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS
+  );
+  if (!Number.isFinite(interval)) {
+    return DEFAULT_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS;
+  }
+
+  return Math.min(
+    MAX_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS,
+    Math.max(MIN_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS, interval)
+  );
+}
+
+export function normalizeWebSocketKeepAliveMessage(value) {
+  if (value === undefined) {
+    return {
+      type: "pagehelper.keepalive"
+    };
+  }
+
+  if (value === null || value === false) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    JSON.stringify(value);
+    return value;
+  } catch {
+    logWarn("Ignored unserializable WebSocket keepalive message.", { value });
+    return {
+      type: "pagehelper.keepalive"
+    };
+  }
+}
+
 export function normalizeWebSocketReconcileIntervalMinutes(value) {
   const interval = Number(value ?? DEFAULT_WEBSOCKET_RECONCILE_INTERVAL_MINUTES);
   if (!Number.isFinite(interval)) {
@@ -290,6 +345,8 @@ function summarizeWebSocketConfig(target) {
     commandHeaders: config.commandHeaders,
     storageCheckIntervalMs: config.storageCheckIntervalMs,
     reconnectDelayMs: config.reconnectDelayMs,
+    keepAliveIntervalMs: config.keepAliveIntervalMs,
+    keepAliveMessage: config.keepAliveMessage,
     logMessages: config.logMessages
   };
 }

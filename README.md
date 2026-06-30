@@ -128,6 +128,10 @@ export const KEEP_ALIVE_CONFIG = {
         gpmpCsrfTokenUrl: "https://admin.example.com/api/gpmp-csrf-token",
         commandHeaders: {
           "X-Page-Helper": "true"
+        },
+        keepAliveIntervalMs: 20000,
+        keepAliveMessage: {
+          type: "pagehelper.keepalive"
         }
       }
     }
@@ -166,11 +170,15 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
+- `webSocket.keepAliveIntervalMs`：WebSocket 连接成功后发送客户端心跳的间隔，默认 `20000`。MV3 Service Worker 空闲窗口约 30 秒，因此会被限制在 `5000` 到 `25000` 之间；设置为 `0` 或 `false` 可关闭心跳。
+- `webSocket.keepAliveMessage`：客户端心跳消息，默认发送 `{"type":"pagehelper.keepalive"}`。如果服务端要求固定文本或其它 JSON 格式，请改成服务端能识别或忽略的消息。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
 
 WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，就会检查 `pageUrl` 页面是否已打开；如果未打开，会主动拉起一个 `pageUrl` 页面。扩展会记住自己拉起的 tab，如果该页面跳转到登录页等非 `pageUrl` 地址，只要这个 tab 还存在，就不会重复拉起新的 `pageUrl`。随后只要 TargetUrl 页面的 `localStorage[localStorageKey]` 有值、`pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
 
 WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航离开后，扩展会主动断开连接。若 token 或 client_id 发生变化，扩展会用新的 query 重建连接。
+
+MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息时可能被浏览器挂起，连接也会随之关闭。扩展默认每 20 秒发送一次客户端心跳，避免连接空闲超过浏览器的后台脚本空闲窗口；如果服务端不接受默认心跳，需要调整 `keepAliveMessage`。
 
 ### WebSocket command 消息
 

@@ -662,6 +662,7 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     existing.pageUrl = candidate.pageUrl;
     existing.sessionTabId = candidate.sessionTabId;
     existing.sessionPageUrl = candidate.sessionPageUrl;
+    syncWebSocketKeepAlive(existing, config, reason);
 
     logInfo("Keeping existing WebSocket connection.", {
       reason,
@@ -704,12 +705,16 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     sessionTabId: candidate.sessionTabId,
     sessionPageUrl: candidate.sessionPageUrl,
     expectedClose: false,
-    openedAt: null
+    openedAt: null,
+    keepAliveTimerId: null,
+    keepAliveIntervalMs: 0,
+    keepAlivePayload: null
   };
   webSocketConnections.set(target.id, connection);
 
   socket.addEventListener("open", () => {
     connection.openedAt = Date.now();
+    syncWebSocketKeepAlive(connection, config, reason);
     logInfo("WebSocket connected.", {
       reason,
       targetId: target.id,
@@ -739,6 +744,7 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     if (isCurrentConnection) {
       webSocketConnections.delete(target.id);
     }
+    stopWebSocketKeepAlive(connection);
 
     logInfo(connection.expectedClose ? "WebSocket closed." : "WebSocket closed unexpectedly.", {
       targetId: target.id,
@@ -764,6 +770,98 @@ function connectOrUpdateWebSocket(target, config, candidate, reason) {
     sessionPageUrl: candidate.sessionPageUrl,
     webSocketUrl: redactWebSocketUrl(urlResult.url)
   });
+}
+
+function syncWebSocketKeepAlive(connection, config, reason) {
+  if (connection.socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  if (!config.keepAliveIntervalMs || config.keepAliveMessage == null) {
+    stopWebSocketKeepAlive(connection);
+    return;
+  }
+
+  const payloadResult = serializeWebSocketKeepAliveMessage(config.keepAliveMessage);
+  if (!payloadResult.ok) {
+    stopWebSocketKeepAlive(connection);
+    logWarn("Could not serialize WebSocket keepalive message.", {
+      targetId: connection.targetId,
+      reason,
+      error: payloadResult.error
+    });
+    return;
+  }
+
+  if (
+    connection.keepAliveTimerId &&
+    connection.keepAliveIntervalMs === config.keepAliveIntervalMs &&
+    connection.keepAlivePayload === payloadResult.payload
+  ) {
+    return;
+  }
+
+  stopWebSocketKeepAlive(connection);
+  connection.keepAliveIntervalMs = config.keepAliveIntervalMs;
+  connection.keepAlivePayload = payloadResult.payload;
+  connection.keepAliveTimerId = setInterval(() => {
+    sendWebSocketKeepAlive(connection);
+  }, config.keepAliveIntervalMs);
+
+  logInfo("Started WebSocket keepalive.", {
+    targetId: connection.targetId,
+    reason,
+    intervalMs: config.keepAliveIntervalMs
+  });
+}
+
+function sendWebSocketKeepAlive(connection) {
+  const current = webSocketConnections.get(connection.targetId);
+  if (current?.socket !== connection.socket || connection.socket.readyState !== WebSocket.OPEN) {
+    stopWebSocketKeepAlive(connection);
+    return;
+  }
+
+  try {
+    connection.socket.send(connection.keepAlivePayload);
+  } catch (error) {
+    logWarn("Failed to send WebSocket keepalive.", {
+      targetId: connection.targetId,
+      readyState: getWebSocketReadyStateName(connection.socket.readyState),
+      error
+    });
+  }
+}
+
+function stopWebSocketKeepAlive(connection) {
+  if (connection.keepAliveTimerId) {
+    clearInterval(connection.keepAliveTimerId);
+  }
+
+  connection.keepAliveTimerId = null;
+  connection.keepAliveIntervalMs = 0;
+  connection.keepAlivePayload = null;
+}
+
+function serializeWebSocketKeepAliveMessage(message) {
+  if (typeof message === "string") {
+    return {
+      ok: true,
+      payload: message
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      payload: JSON.stringify(message)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: normalizeError(error)
+    };
+  }
 }
 
 async function handleWebSocketMessage(target, config, connection, event) {
@@ -1050,6 +1148,7 @@ function disconnectWebSocket(targetId, reason) {
 
   connection.expectedClose = true;
   webSocketConnections.delete(targetId);
+  stopWebSocketKeepAlive(connection);
 
   try {
     if (connection.socket.readyState === WebSocket.CONNECTING || connection.socket.readyState === WebSocket.OPEN) {
