@@ -1,16 +1,16 @@
 # Page Helper
 
-一个开发者配置型 Chrome 扩展，用于按配置在指定页面执行自动化辅助动作。当前内置了定时点击和服务端 WebSocket 连接能力，可用于页面保活、定时触发无副作用控件、把页面会话身份透传给服务端等场景。
+一个配置驱动的 Chrome 扩展，用于按站点执行页面自动化与服务端 WebSocket 同步。点击扩展图标后，可以分别勾选要同步的网站；各站点的页面、连接、token 和运行状态按 `target.id` 隔离，多个选项可以同时启用。
 
 ## 使用方式
 
-1. 打开 `src/config.js`。
-2. 把 `targets[0]` 改成你的系统配置，并将 `enabled` 改为 `true`。
-3. 在 Chrome 地址栏打开 `chrome://extensions/`。
-4. 打开右上角「开发者模式」。
-5. 点击「加载已解压的扩展程序」，选择本目录。
+1. 打开 `src/config.js`，把两个示例站点的 URL、页面存储键、WebSocket 地址和 CSRF token 规则改成真实配置。
+2. 在 Chrome 地址栏打开 `chrome://extensions/`。
+3. 打开右上角「开发者模式」。
+4. 点击「加载已解压的扩展程序」，选择本目录。
+5. 点击工具栏中的 Page Helper 图标，按需勾选网站一、网站二；两个选项互不排斥。
 
-每次修改 `src/config.js` 或其它扩展源码后，都需要回到 `chrome://extensions/`，点击这个扩展卡片上的「重新加载」。重新加载后，扩展会在后台日志里打印当前读取到的目标、定时器和下一次执行时间。
+勾选状态保存在 `chrome.storage.local`，关闭面板或重启浏览器后仍会保留。切换选项会立即通知后台：启用时建立该站点的定时任务和同步连接，停用时只清理该站点，不影响其它已勾选站点。每次修改 `src/config.js` 或其它扩展源码后，仍需回到 `chrome://extensions/` 点击「重新加载」。
 
 ## 内网自动更新
 
@@ -43,7 +43,7 @@
 每次发布新版本前，先递增 `manifest.json` 里的 `version`，再重新执行打包脚本。生成的文件名类似：
 
 ```text
-dist/page-helper-0.1.0.crx
+dist/page-helper-0.2.0.crx
 ```
 
 ### 生成 update.xml
@@ -51,7 +51,7 @@ dist/page-helper-0.1.0.crx
 打包完成后，到 `chrome://extensions/` 查看这个 CRX 安装后的扩展 ID，然后生成更新清单：
 
 ```bash
-./scripts/generate-update-xml.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://your-internal-server.com/extension/page-helper-0.1.0.crx
+./scripts/generate-update-xml.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://your-internal-server.com/extension/page-helper-0.2.0.crx
 ```
 
 这会生成 `deploy/update.xml`。你也可以参考 `deploy/update.xml.example` 手动维护：
@@ -60,7 +60,7 @@ dist/page-helper-0.1.0.crx
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
   <app appid='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'>
-    <updatecheck codebase='https://your-internal-server.com/extension/page-helper-0.1.0.crx' version='0.1.0' />
+    <updatecheck codebase='https://your-internal-server.com/extension/page-helper-0.2.0.crx' version='0.2.0' />
   </app>
 </gupdate>
 ```
@@ -94,6 +94,8 @@ Windows Registry Editor Version 5.00
 
 ## 配置示例
 
+面板会自动遍历带 `syncOption` 的 target，不需要在 HTML 中手写选项。下面是一项双 token 配置；第二个站点只需复制整个 target、换一个唯一 `id`，并把 `csrfTokens` 数组缩减为一项。仓库内的 `src/config.js` 已同时放好了双 token 和单 token 两个完整示例。
+
 ```js
 export const KEEP_ALIVE_CONFIG = {
   defaultIntervalMinutes: 50,
@@ -101,6 +103,11 @@ export const KEEP_ALIVE_CONFIG = {
     {
       id: "internal-admin",
       enabled: true,
+      syncOption: {
+        label: "内部管理站",
+        description: "双 CSRF Token 配置",
+        defaultEnabled: false
+      },
       pageUrl: "https://admin.example.com/home",
       urlPatterns: ["https://admin.example.com/*"],
       urlIncludes: ["https://admin.example.com/"],
@@ -124,8 +131,25 @@ export const KEEP_ALIVE_CONFIG = {
         localStorageQueryKey: "auth-token",
         sessionStorageKey: "page-session",
         sessionStorageJsonPath: "$.client.id",
-        csrfTokenUrl: "https://admin.example.com/api/csrf-token",
-        gpmpCsrfTokenUrl: "https://admin.example.com/api/gpmp-csrf-token",
+        csrfTokens: [
+          {
+            id: "hw-csrf",
+            url: "https://admin.example.com/api/csrf-token",
+            headerName: "X-hw-Csrftoken",
+            responseType: "json",
+            valuePath: "$",
+            serialize: "json"
+          },
+          {
+            id: "session-csrf",
+            url: "https://admin.example.com/api/gpmp-csrf-token",
+            headerName: "X-Session-Csrf-Token",
+            responseType: "auto",
+            valuePaths: ["$.csrfToken", "$"],
+            serialize: "string",
+            cookieName: "gpmp-csrfToken"
+          }
+        ],
         commandHeaders: {
           "X-Page-Helper": "true"
         },
@@ -141,8 +165,10 @@ export const KEEP_ALIVE_CONFIG = {
 
 ## 字段说明
 
-- `id`：目标唯一标识，会用于定时任务名称。
-- `enabled`：是否启用这个目标。
+- `id`：非空且唯一的字符串标识，会用于定时任务名称和站点状态隔离。
+- `enabled`：开发者配置开关；为 `false` 时不出现在面板，也不会运行。用户是否同步由面板勾选状态决定。
+- `syncOption.label` / `description`：面板中显示的名称和说明。
+- `syncOption.defaultEnabled`：这个站点尚未产生本地勾选记录时的默认状态。示例为安全起见均设为 `false`。
 - `pageUrl`：目标页面地址；当 `openIfMissing` 为 `true` 时会自动打开。
 - `urlPatterns`：Chrome match patterns，用于查找已打开的目标标签页。
 - `urlIncludes` / `urlRegexes`：二次过滤规则，避免误点同域名下的其它页面。
@@ -165,14 +191,24 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.localStorageQueryKey`：追加到 WebSocket URL 上的 query key；未配置时等于 `localStorageKey`。
 - `webSocket.sessionStorageKey`：顶层 `pageUrl` 页面 `sessionStorage` 中保存 client 信息的 key。
 - `webSocket.sessionStorageJsonPath`：从 `pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 这段 JSON 里提取 `client_id` 的路径，例如 `$.client.id`、`user.clients[0].id`。最终 query key 固定为 `client_id`。
-- `webSocket.csrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内先用 `GET` 调用这个接口；接口返回的完整 JSON 会被序列化后写入请求头 `X-hw-Csrftoken`。
-- `webSocket.gpmpCsrfTokenUrl`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内用 `GET` 调用这个新增接口，并带上页面 cookie。扩展会从接口响应中获取 `csrfToken`，写入当前域名的 `gpmp-csrfToken` cookie，并写入请求头 `X-Session-Csrf-Token`。
+- `webSocket.csrfTokens`：命令请求前按顺序执行的 token 配置数组。双 token 站点配置两项，单 token 站点只配置一项；站点之间不共享数组或结果。
+- `csrfTokens[].url` / `method` / `credentials` / `requestHeaders`：token 请求地址、方法、凭证模式和可选请求头。默认分别为 `GET`、`include`、空对象。
+- `csrfTokens[].responseType`：`json`、`text` 或 `auto`。`auto` 会根据响应 Content-Type 尝试解析 JSON。
+- `csrfTokens[].valuePath` / `valuePaths`：从响应提取值的 JSON path；`$` 代表整个响应。`valuePaths` 可提供按顺序尝试的备用路径。
+- `csrfTokens[].serialize`：`json` 会用 `JSON.stringify`，`string` 会转成字符串。
+- `csrfTokens[].headerName`：把提取后的值写入最终业务请求的哪个 header。
+- `csrfTokens[].cookieName`：可选；配置后还会把相同值写入当前页面域名的 cookie。不同站点可用不同名称，未配置则不写。
+- 旧字段 `webSocket.csrfTokenUrl` 和 `webSocket.gpmpCsrfTokenUrl` 仍兼容，并会自动映射成原来的双 token 行为；新站点建议使用 `csrfTokens`。
 - `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
 - `webSocket.keepAliveIntervalMs`：WebSocket 连接成功后发送客户端心跳的间隔，默认 `20000`。MV3 Service Worker 空闲窗口约 30 秒，因此会被限制在 `5000` 到 `25000` 之间；设置为 `0` 或 `false` 可关闭心跳。
 - `webSocket.keepAliveMessage`：客户端心跳消息，默认发送 `{"type":"pagehelper.keepalive"}`。如果服务端要求固定文本或其它 JSON 格式，请改成服务端能识别或忽略的消息。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。
+
+### 新增更多网站
+
+在 `KEEP_ALIVE_CONFIG.targets` 中追加一个对象即可。需要保证 `id` 唯一，并配置 `syncOption`；面板会自动增加对应复选项。页面匹配、WebSocket、storage key、`csrfTokens`、固定请求头及可选 cookie 全部写在这个对象内，不会复用其它站点的配置。若只需要一个 token，`csrfTokens` 数组只放一项即可。
 
 WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载、目标 Tab URL 变化、storage watcher 检测到值变化、或后台周期校验时，只要检测到匹配的 TargetUrl 页面，就会检查 `pageUrl` 页面是否已打开；如果未打开，会主动拉起一个 `pageUrl` 页面。扩展会记住自己拉起的 tab，如果该页面跳转到登录页等非 `pageUrl` 地址，只要这个 tab 还存在，就不会重复拉起新的 `pageUrl`。随后只要 TargetUrl 页面的 `localStorage[localStorageKey]` 有值、`pageUrl` 页面的 `sessionStorage[sessionStorageKey]` 能按 JSON path 取到值，就会连接服务端。安装扩展时页面已经打开也会被扫描到。
 
@@ -188,7 +224,7 @@ MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息
 - `payload`：作为 fetch 请求体；对象会序列化为 JSON 字符串。
 - `method`：作为 fetch method；未提供时默认为 `POST`。
 
-请求前会先在 `pageUrl` 页面内用 `GET` 调用 `webSocket.csrfTokenUrl`，将接口返回的完整 JSON 用 `JSON.stringify` 后放入 `X-hw-Csrftoken` 请求头；随后调用 `webSocket.gpmpCsrfTokenUrl`，从接口响应中取出 `csrfToken`，写入当前域名的 `gpmp-csrfToken` cookie，并放入 `X-Session-Csrf-Token` 请求头。最终请求会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
+请求前会在该站点的 `pageUrl` 页面内依次执行 `webSocket.csrfTokens`。每一项独立请求、解析并写入自己配置的 header/可选 cookie；任一必需项失败时，只终止当前站点的这条 command。最终请求会合并 `webSocket.commandHeaders` 中配置的固定 KV。响应体会按 JSON content-type 优先解析，否则作为文本返回。扩展会向服务端发送：
 
 ```json
 {
@@ -209,7 +245,7 @@ MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息
 后台会记录这些关键事件：
 
 - `Setting up alarms.`：扩展读取配置并准备定时器。
-- `No enabled targets.`：没有任何启用的目标，通常是 `enabled` 没改成 `true` 或扩展没重新加载。
+- `No enabled keep-alive targets.`：当前没有勾选带页面点击配置的站点，或对应 target 没有 selector。
 - `Created alarm.`：已创建定时器，日志里会有 `firstRunAt` 和 `intervalMinutes`。
 - `Alarm fired.`：定时器触发。
 - `No matching tab found; opening configured page.`：没有找到页面，准备主动打开 `pageUrl`。
@@ -218,6 +254,16 @@ MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息
 - `WebSocket connecting.` / `WebSocket connected.`：已经按配置开始连接或连接成功，日志里的 URL 会隐藏 query 值。
 - `WebSocket prerequisites are not ready.`：目标页存在，但 localStorage token 或 sessionStorage client_id 还没准备好。
 - `Closing WebSocket connection.`：所有匹配目标页都已关闭、导航离开，或配置变更导致连接关闭。
+
+## 自动验证
+
+项目使用 Node 内置测试，无需安装第三方依赖：
+
+```bash
+npm test
+```
+
+测试覆盖两个站点的四种勾选组合、面板到后台的持久化路径、并发更新不丢状态、双/单 token 请求、异常 token 拦截，以及停用站点后卸载页面 watcher。
 
 最近 300 条日志也会保存在 `chrome.storage.local`。在 Service Worker 控制台执行：
 

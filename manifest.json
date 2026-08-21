@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Page Helper",
   "description": "Developer-configured browser page automation helpers.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
   "update_url": "https://your-internal-server.com/extension/page-helper/update.xml",
   "permissions": ["alarms", "scripting", "storage", "tabs"],
@@ -15,6 +15,7 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws: wss:;"
   },
   "action": {
-    "default_title": "Page Helper"
+    "default_title": "Page Helper",
+    "default_popup": "src/popup/popup.html"
   }
 }

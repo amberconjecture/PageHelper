@@ -11,6 +11,7 @@ import {
   MIN_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS
 } from "./constants.js";
 import { logWarn } from "./logger.js";
+import { isTargetSelected } from "./site-selection.js";
 import { hasOwn, normalizeArray } from "./utils.js";
 import { redactWebSocketUrl } from "./websocket-utils.js";
 
@@ -31,18 +32,47 @@ export function getEnabledTargets() {
 }
 
 export function getConfiguredTargets() {
-  return normalizeArray(KEEP_ALIVE_CONFIG.targets).filter((target) => {
+  return getAvailableTargets().filter((target) => isTargetSelected(target));
+}
+
+export function getAvailableTargets() {
+  const seenIds = new Set();
+
+  return normalizeArray(KEEP_ALIVE_CONFIG.targets).reduce((targets, target) => {
     if (!target || target.enabled === false) {
-      return false;
+      return targets;
     }
 
-    if (!target.id) {
+    if (typeof target.id !== "string") {
+      logWarn("Ignored target whose id is not a string.", { targetId: target.id });
+      return targets;
+    }
+
+    const targetId = String(target.id || "").trim();
+    if (!targetId) {
       logWarn("Ignored enabled target without id.", { target });
-      return false;
+      return targets;
     }
 
-    return true;
-  });
+    if (seenIds.has(targetId)) {
+      logWarn("Ignored target with duplicate id.", { targetId });
+      return targets;
+    }
+
+    seenIds.add(targetId);
+    targets.push(target.id === targetId ? target : { ...target, id: targetId });
+    return targets;
+  }, []);
+}
+
+export function isTargetConfigured(targetId) {
+  const expectedId = String(targetId || "");
+  return getConfiguredTargets().some((target) => target.id === expectedId);
+}
+
+export function isWebSocketTargetConfigured(targetId) {
+  const expectedId = String(targetId || "");
+  return getWebSocketTargets().some((target) => target.id === expectedId);
 }
 
 export function getWebSocketTargets() {
@@ -129,6 +159,7 @@ export function normalizeWebSocketConfig(target) {
       rawConfig.sessionStorageJsonPath ?? target.webSocketSessionStorageJsonPath ?? "$",
     gpmpCsrfTokenUrl,
     csrfTokenUrl: rawConfig.csrfTokenUrl ?? target.webSocketCsrfTokenUrl ?? "",
+    csrfTokens: normalizeCsrfTokens(rawConfig, target),
     commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
     reconnectDelayMs: normalizeWebSocketReconnectDelayMs(rawConfig.reconnectDelayMs),
@@ -139,6 +170,73 @@ export function normalizeWebSocketConfig(target) {
       rawConfig.keepAliveMessage ?? target.webSocketKeepAliveMessage
     ),
     logMessages: rawConfig.logMessages === true
+  };
+}
+
+function normalizeCsrfTokens(rawConfig, target) {
+  if (hasOwn(rawConfig, "csrfTokens")) {
+    return normalizeArray(rawConfig.csrfTokens)
+      .map((token, index) => normalizeCsrfToken(token, index))
+      .filter(Boolean);
+  }
+
+  // 兼容旧配置：未声明 csrfTokens 时，将原有两个 URL 归一化为两步。
+  return [
+    normalizeCsrfToken(
+      {
+        id: "hw-csrf",
+        url: rawConfig.csrfTokenUrl ?? target.webSocketCsrfTokenUrl ?? "",
+        headerName: "X-hw-Csrftoken",
+        responseType: "json",
+        valuePath: "$",
+        serialize: "json"
+      },
+      0
+    ),
+    normalizeCsrfToken(
+      {
+        id: "session-csrf",
+        url:
+          rawConfig.gpmpCsrfTokenUrl ??
+          target.webSocketGpmpCsrfTokenUrl ??
+          "",
+        headerName: "X-Session-Csrf-Token",
+        responseType: "auto",
+        valuePaths: ["$.csrfToken", "$"],
+        serialize: "string",
+        cookieName: "gpmp-csrfToken"
+      },
+      1
+    )
+  ];
+}
+
+function normalizeCsrfToken(value, index) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const responseType = ["auto", "json", "text"].includes(value.responseType)
+    ? value.responseType
+    : "auto";
+  const serialize = ["json", "string"].includes(value.serialize) ? value.serialize : "string";
+  const valuePaths = normalizeArray(value.valuePaths ?? value.valuePath ?? "$")
+    .map((path) => String(path || "$"))
+    .filter(Boolean);
+
+  return {
+    id: String(value.id || `csrf-${index + 1}`),
+    url: String(value.url || "").trim(),
+    method: String(value.method || "GET").trim().toUpperCase() || "GET",
+    credentials: value.credentials === "omit" || value.credentials === "same-origin" ? value.credentials : "include",
+    requestHeaders: normalizeHeaderMap(value.requestHeaders),
+    headerName: String(value.headerName || value.header || "").trim(),
+    responseType,
+    valuePath: valuePaths[0] || "$",
+    valuePaths: valuePaths.length ? valuePaths : ["$"],
+    serialize,
+    cookieName: String(value.cookieName || value.cookie?.name || "").trim(),
+    required: value.required !== false
   };
 }
 
@@ -342,6 +440,17 @@ function summarizeWebSocketConfig(target) {
     sessionStorageJsonPath: config.sessionStorageJsonPath,
     csrfTokenUrl: config.csrfTokenUrl,
     gpmpCsrfTokenUrl: config.gpmpCsrfTokenUrl,
+    csrfTokens: config.csrfTokens.map((token) => ({
+      id: token.id,
+      url: token.url,
+      headerName: token.headerName,
+      responseType: token.responseType,
+      valuePath: token.valuePath,
+      valuePaths: token.valuePaths,
+      serialize: token.serialize,
+      cookieName: token.cookieName,
+      required: token.required
+    })),
     commandHeaders: config.commandHeaders,
     storageCheckIntervalMs: config.storageCheckIntervalMs,
     reconnectDelayMs: config.reconnectDelayMs,

@@ -178,33 +178,22 @@ export async function executeWebSocketCommandFetchInPage(command) {
     };
   }
 
-  const csrfResult = await readCsrfToken();
+  const headers = normalizeHeaders(command.headers);
+  const csrfResult = await applyCsrfTokens(headers);
   if (!csrfResult.ok) {
     return {
       ok: false,
       reason: csrfResult.reason,
+      tokenId: csrfResult.tokenId,
       href: location.href,
       title: document.title,
       status: csrfResult.status,
       statusText: csrfResult.statusText,
+      payload: csrfResult.payload,
       error: csrfResult.error
     };
   }
 
-  const gpmpCsrfResult = await readGpmpCsrfToken();
-  if (!gpmpCsrfResult.ok) {
-    return {
-      ok: false,
-      reason: gpmpCsrfResult.reason,
-      href: location.href,
-      title: document.title,
-      status: gpmpCsrfResult.status,
-      statusText: gpmpCsrfResult.statusText,
-      error: gpmpCsrfResult.error
-    };
-  }
-
-  const headers = normalizeHeaders(command.headers);
   const supportsBody = method !== "GET" && method !== "HEAD";
   let body;
 
@@ -219,9 +208,6 @@ export async function executeWebSocketCommandFetchInPage(command) {
       }
     }
   }
-
-  setHeader(headers, "X-hw-Csrftoken", String(csrfResult.csrfToken));
-  setHeader(headers, "X-Session-Csrf-Token", String(gpmpCsrfResult.csrfToken));
 
   try {
     const fetchOptions = {
@@ -255,125 +241,267 @@ export async function executeWebSocketCommandFetchInPage(command) {
     };
   }
 
-  async function readCsrfToken() {
-    const csrfTokenUrl = getConfiguredString(command.csrfTokenUrl);
-    if (!csrfTokenUrl) {
+  async function applyCsrfTokens(targetHeaders) {
+    const tokens = getConfiguredCsrfTokens();
+
+    for (const token of tokens) {
+      const result = await readCsrfToken(token);
+      if (!result.ok) {
+        if (token?.required === false) {
+          continue;
+        }
+
+        return result;
+      }
+
+      setHeader(targetHeaders, token.headerName, result.value);
+      if (token.cookieName) {
+        writeCookieValue(token.cookieName, result.value);
+      }
+    }
+
+    return { ok: true };
+  }
+
+  function getConfiguredCsrfTokens() {
+    if (Array.isArray(command.csrfTokens)) {
+      return command.csrfTokens;
+    }
+
+    // 兼容直接调用旧 command 结构的场景。
+    return [
+      {
+        id: "hw-csrf",
+        url: command.csrfTokenUrl,
+        headerName: "X-hw-Csrftoken",
+        responseType: "json",
+        valuePaths: ["$"],
+        serialize: "json"
+      },
+      {
+        id: "session-csrf",
+        url: command.gpmpCsrfTokenUrl,
+        headerName: "X-Session-Csrf-Token",
+        responseType: "auto",
+        valuePaths: ["$.csrfToken", "$"],
+        serialize: "string",
+        cookieName: "gpmp-csrfToken"
+      }
+    ];
+  }
+
+  async function readCsrfToken(token) {
+    const tokenId = getConfiguredString(token?.id) || "csrf-token";
+    const tokenUrl = getConfiguredString(token?.url);
+    const headerName = getConfiguredString(token?.headerName);
+    if (!tokenUrl || !headerName) {
       return {
         ok: false,
-        reason: "missing-csrf-token-url"
+        tokenId,
+        reason: !tokenUrl ? "missing-csrf-token-url" : "missing-csrf-token-header"
       };
     }
 
     try {
-      const response = await fetch(csrfTokenUrl, {
-        method: "GET",
-        credentials: "include"
+      const response = await fetch(tokenUrl, {
+        method: getConfiguredString(token.method).toUpperCase() || "GET",
+        credentials: normalizeCredentials(token.credentials),
+        headers: normalizeHeaders(token.requestHeaders)
       });
       const text = await response.text();
-      let payload;
-
-      try {
-        payload = JSON.parse(text);
-      } catch (error) {
+      const parsed = parseTokenResponse(text, response.headers.get("content-type"), token.responseType);
+      if (!parsed.ok) {
         return {
           ok: false,
-          reason: "invalid-csrf-token-response-json",
+          tokenId,
+          reason: "invalid-csrf-token-response",
           status: response.status,
           statusText: response.statusText,
-          error: normalizeError(error)
+          error: parsed.error
         };
       }
 
       if (!response.ok) {
         return {
           ok: false,
+          tokenId,
           reason: "csrf-token-request-failed",
           status: response.status,
           statusText: response.statusText,
-          payload
+          payload: parsed.payload
+        };
+      }
+
+      const extracted = extractFirstTokenValue(parsed.payload, token.valuePaths || [token.valuePath || "$"]);
+      if (!extracted.ok) {
+        return {
+          ok: false,
+          tokenId,
+          reason: "missing-csrf-token-response",
+          status: response.status,
+          statusText: response.statusText,
+          payload: parsed.payload
+        };
+      }
+
+      const serialized = serializeTokenValue(extracted.value, token.serialize);
+      if (!serialized.ok) {
+        return {
+          ok: false,
+          tokenId,
+          reason: "invalid-csrf-token-value",
+          error: serialized.error
         };
       }
 
       return {
         ok: true,
-        csrfToken: JSON.stringify(payload)
+        tokenId,
+        value: serialized.value
       };
     } catch (error) {
       return {
         ok: false,
+        tokenId,
         reason: "csrf-token-request-error",
         error: normalizeError(error)
       };
     }
   }
 
-  async function readGpmpCsrfToken() {
-    const gpmpCsrfTokenUrl = getConfiguredString(command.gpmpCsrfTokenUrl);
-    if (!gpmpCsrfTokenUrl) {
-      return {
-        ok: false,
-        reason: "missing-gpmp-csrf-token-url"
-      };
+  function parseTokenResponse(text, contentType, responseType) {
+    if (responseType === "text") {
+      return { ok: true, payload: text };
     }
 
-    try {
-      const response = await fetch(gpmpCsrfTokenUrl, {
-        method: "GET",
-        credentials: "include"
-      });
-      const text = await response.text();
-      const payload = parseResponseBody(text, response.headers.get("content-type"));
-
-      if (!response.ok) {
-        return {
-          ok: false,
-          reason: "gpmp-csrf-token-request-failed",
-          status: response.status,
-          statusText: response.statusText,
-          payload
-        };
+    if (responseType === "json") {
+      try {
+        return { ok: true, payload: text ? JSON.parse(text) : null };
+      } catch (error) {
+        return { ok: false, error: normalizeError(error) };
       }
-
-      const csrfToken = extractGpmpCsrfToken(payload);
-      if (!csrfToken) {
-        return {
-          ok: false,
-          reason: "missing-gpmp-csrf-token-response",
-          status: response.status,
-          statusText: response.statusText,
-          payload
-        };
-      }
-
-      writeCookieValue("gpmp-csrfToken", csrfToken);
-
-      return {
-        ok: true,
-        csrfToken
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "gpmp-csrf-token-request-error",
-        error: normalizeError(error)
-      };
     }
+
+    return {
+      ok: true,
+      payload: parseResponseBody(text, contentType)
+    };
+  }
+
+  function extractFirstTokenValue(payload, valuePaths) {
+    for (const valuePath of Array.isArray(valuePaths) ? valuePaths : [valuePaths]) {
+      const result = extractTokenValue(payload, valuePath);
+      if (result.ok && isPresentTokenValue(result.value)) {
+        return result;
+      }
+    }
+
+    return { ok: false };
+  }
+
+  function extractTokenValue(payload, valuePath) {
+    const path = getConfiguredString(valuePath) || "$";
+    if (path === "$") {
+      return { ok: true, value: payload };
+    }
+
+    const pathTokens = parseTokenJsonPath(path);
+    if (!pathTokens.ok) {
+      return pathTokens;
+    }
+
+    let current = payload;
+    for (const pathToken of pathTokens.tokens) {
+      if (current == null || !(pathToken in Object(current))) {
+        return { ok: false };
+      }
+      current = current[pathToken];
+    }
+
+    return { ok: true, value: current };
+  }
+
+  function parseTokenJsonPath(valuePath) {
+    const input = valuePath.startsWith("$") ? valuePath.slice(1) : valuePath;
+    const tokens = [];
+    let buffer = "";
+    let index = 0;
+
+    while (index < input.length) {
+      const char = input[index];
+      if (char === ".") {
+        pushBuffer();
+        index += 1;
+        continue;
+      }
+
+      if (char === "[") {
+        pushBuffer();
+        const closeIndex = input.indexOf("]", index);
+        if (closeIndex === -1) {
+          return { ok: false };
+        }
+
+        const rawToken = input.slice(index + 1, closeIndex).trim();
+        const quotedMatch = rawToken.match(/^["'](.*)["']$/);
+        const pathToken = quotedMatch ? quotedMatch[1] : rawToken;
+        if (!pathToken) {
+          return { ok: false };
+        }
+        tokens.push(/^\d+$/.test(pathToken) ? Number(pathToken) : pathToken);
+        index = closeIndex + 1;
+        continue;
+      }
+
+      buffer += char;
+      index += 1;
+    }
+
+    pushBuffer();
+    return { ok: true, tokens };
+
+    function pushBuffer() {
+      const pathToken = buffer.trim();
+      if (pathToken) {
+        tokens.push(pathToken);
+      }
+      buffer = "";
+    }
+  }
+
+  function serializeTokenValue(value, serialize) {
+    if (serialize === "json") {
+      try {
+        return { ok: true, value: JSON.stringify(value) };
+      } catch (error) {
+        return { ok: false, error: normalizeError(error) };
+      }
+    }
+
+    if (!isPresentTokenValue(value)) {
+      return { ok: false };
+    }
+
+    if (typeof value === "object" || typeof value === "function" || typeof value === "symbol") {
+      return { ok: false };
+    }
+
+    return {
+      ok: true,
+      value: typeof value === "string" ? value.trim() : String(value)
+    };
+  }
+
+  function isPresentTokenValue(value) {
+    return value !== undefined && value !== null && (typeof value !== "string" || value.trim() !== "");
+  }
+
+  function normalizeCredentials(value) {
+    return value === "omit" || value === "same-origin" ? value : "include";
   }
 
   function getConfiguredString(value) {
     return typeof value === "string" ? value.trim() : "";
-  }
-
-  function extractGpmpCsrfToken(payload) {
-    if (typeof payload === "string") {
-      return payload.trim();
-    }
-
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return "";
-    }
-
-    return getConfiguredString(payload.csrfToken);
   }
 
   function writeCookieValue(cookieName, value) {
@@ -547,6 +675,48 @@ export function installWebSocketStorageWatcherInPage(config) {
   return {
     ok: true,
     status: "installed",
+    href: location.href
+  };
+}
+
+export function removeDisabledWebSocketStorageWatchersInPage(config) {
+  const registryKey = "__pagehelper_websocket_storage_watchers__";
+  const registry = window[registryKey];
+  if (!registry || typeof registry !== "object") {
+    return {
+      ok: true,
+      removedTargetIds: [],
+      href: location.href
+    };
+  }
+
+  const enabledTargetIds = new Set(
+    Array.isArray(config?.enabledTargetIds) ? config.enabledTargetIds.map((targetId) => String(targetId)) : []
+  );
+  const removedTargetIds = [];
+
+  for (const targetId of Object.keys(registry)) {
+    if (enabledTargetIds.has(targetId)) {
+      continue;
+    }
+
+    try {
+      registry[targetId]?.stop?.();
+    } catch {
+      // 即使旧 watcher 的清理函数异常，也要移除注册项并继续清理其它站点。
+    } finally {
+      delete registry[targetId];
+      removedTargetIds.push(targetId);
+    }
+  }
+
+  if (!Object.keys(registry).length) {
+    delete window[registryKey];
+  }
+
+  return {
+    ok: true,
+    removedTargetIds,
     href: location.href
   };
 }

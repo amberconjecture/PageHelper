@@ -11,7 +11,13 @@ export const KEEP_ALIVE_CONFIG = {
   targets: [
     {
       id: "example-page",
-      enabled: false,
+      // enabled 控制这项配置是否提供给扩展；用户是否实际启用由面板勾选状态决定。
+      enabled: true,
+      syncOption: {
+        label: "网站一",
+        description: "现有双 CSRF Token 配置",
+        defaultEnabled: false
+      },
 
       // 用于在没有匹配标签页且 openIfMissing=true 时打开页面。
       pageUrl: "https://example.com/app/home",
@@ -44,7 +50,7 @@ export const KEEP_ALIVE_CONFIG = {
       clickStrategy: "mouse-events",
 
       webSocket: {
-        enabled: false,
+        enabled: true,
 
         // 服务端 WebSocket 地址。最终会追加两个 query：
         // 1) localStorageQueryKey=TargetUrl 页面的 localStorage[localStorageKey]
@@ -69,6 +75,71 @@ export const KEEP_ALIVE_CONFIG = {
           // "X-Page-Helper": "true"
         },
 
+        storageCheckIntervalMs: 3000,
+        reconnectDelayMs: 5000,
+        keepAliveIntervalMs: 20000,
+        keepAliveMessage: {
+          type: "pagehelper.keepalive"
+        },
+        logMessages: false
+      }
+    },
+    {
+      // 第二个站点完全使用自己的页面、存储键、WebSocket 和 token 配置。
+      // 请把下面的 example 地址与键名替换成真实值。
+      id: "second-page",
+      enabled: true,
+      syncOption: {
+        label: "网站二",
+        description: "独立的单 CSRF Token 配置",
+        defaultEnabled: false
+      },
+
+      pageUrl: "https://second.example.com/app/home",
+      urlPatterns: ["https://second.example.com/*"],
+      urlIncludes: ["https://second.example.com/app/"],
+      urlRegexes: [],
+
+      selector: "#page-helper-target",
+      selectors: [],
+      intervalMinutes: 50,
+      waitForSelectorMs: 10000,
+      openIfMissing: true,
+      activeWhenOpened: true,
+      promptLoginWhenOpened: true,
+      loginPromptTitle: "Page Helper 已打开网站二",
+      loginPromptMessage: "请完成登录。登录成功后，扩展会同步这个网站。",
+      loginPromptDurationMs: 30000,
+      clickAllMatchingTabs: false,
+      allFrames: true,
+      scrollIntoView: true,
+      clickStrategy: "mouse-events",
+
+      webSocket: {
+        enabled: true,
+        url: "wss://second.example.com/ws",
+        targetUrl: "https://second.example.com/app/home",
+        targetUrlPatterns: ["https://second.example.com/*"],
+        targetUrlIncludes: ["https://second.example.com/app/"],
+        targetUrlRegexes: [],
+        localStorageKey: "auth-token",
+        localStorageQueryKey: "auth-token",
+        sessionStorageKey: "page-session",
+        sessionStorageJsonPath: "$.client.id",
+
+        // token 是数组：这个站点只声明一项，因此每次 command 只会请求这一个 URL。
+        // responseType/valuePath/serialize/headerName 请按真实接口响应调整。
+        csrfTokens: [
+          {
+            id: "site-two-csrf",
+            url: "https://second.example.com/api/csrf-token",
+            headerName: "X-hw-Csrftoken",
+            responseType: "json",
+            valuePath: "$",
+            serialize: "json"
+          }
+        ],
+        commandHeaders: {},
         storageCheckIntervalMs: 3000,
         reconnectDelayMs: 5000,
         keepAliveIntervalMs: 20000,

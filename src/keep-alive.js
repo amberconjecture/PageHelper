@@ -6,6 +6,7 @@ import {
   getEnabledTargets,
   getSelectors,
   getWebSocketTargets,
+  isTargetConfigured,
   normalizeInjectionTarget,
   normalizeIntervalMinutes,
   normalizeLoginPrompt,
@@ -76,16 +77,23 @@ export async function setupAlarms(reason) {
     }
   }
 
-  await Promise.all(
-    existingPageHelperAlarms
-      .filter((alarm) => !expectedNames.has(alarm.name))
-      .map(async (alarm) => {
-        await chrome.alarms.clear(alarm.name);
-        logInfo("Cleared stale alarm.", { alarmName: alarm.name });
-      })
+  const staleAlarms = existingPageHelperAlarms.filter((alarm) => !expectedNames.has(alarm.name));
+  const cleanupResults = await Promise.allSettled(
+    staleAlarms.map(async (alarm) => {
+      await chrome.alarms.clear(alarm.name);
+      logInfo("Cleared stale alarm.", { alarmName: alarm.name });
+    })
   );
+  cleanupResults.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logError("Failed to clear stale alarm.", {
+        alarmName: staleAlarms[index]?.name,
+        error: result.reason
+      });
+    }
+  });
 
-  await Promise.all(
+  const alarmResults = await Promise.allSettled(
     targets.map((target) =>
       createOrUpdateAlarm(
         target,
@@ -93,6 +101,14 @@ export async function setupAlarms(reason) {
       )
     )
   );
+  alarmResults.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logError("Failed to set up target alarm.", {
+        targetId: targets[index]?.id,
+        error: result.reason
+      });
+    }
+  });
   logInfo("Alarm setup complete.", { enabledTargetIds: targets.map((target) => target.id) });
 }
 
@@ -144,6 +160,14 @@ async function runTarget(target, trigger, options = {}) {
   });
 
   const tabs = await findMatchingTabs(target);
+  if (!isTargetConfigured(target.id)) {
+    logInfo("Stopped target run because the site was disabled.", {
+      trigger,
+      targetId: target.id
+    });
+    return;
+  }
+
   let tabsToClick = tabs;
 
   if (!tabsToClick.length && shouldOpenIfMissing(target)) {
@@ -159,6 +183,9 @@ async function runTarget(target, trigger, options = {}) {
     });
 
     await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
+    if (!isTargetConfigured(target.id)) {
+      return;
+    }
     await showLoginPrompt(createdTab, target);
     logInfo("Opened page and prompted the user to sign in.", {
       targetId: target.id,
@@ -196,6 +223,10 @@ async function runTarget(target, trigger, options = {}) {
 }
 
 async function clickTabTarget(tab, target) {
+  if (!isTargetConfigured(target.id)) {
+    return;
+  }
+
   try {
     const results = await chrome.scripting.executeScript({
       target: {
