@@ -10,6 +10,7 @@ import {
   MIN_INTERVAL_MINUTES,
   MIN_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS
 } from "./constants.js";
+import { normalizeCommandRouting } from "./command-routing.js";
 import { logWarn } from "./logger.js";
 import { isTargetSelected } from "./site-selection.js";
 import { hasOwn, normalizeArray } from "./utils.js";
@@ -169,7 +170,8 @@ export function normalizeWebSocketConfig(target) {
     keepAliveMessage: normalizeWebSocketKeepAliveMessage(
       rawConfig.keepAliveMessage ?? target.webSocketKeepAliveMessage
     ),
-    logMessages: rawConfig.logMessages === true
+    logMessages: rawConfig.logMessages === true,
+    commandRouting: normalizeCommandRouting(target)
   };
 }
 
@@ -456,6 +458,7 @@ function summarizeWebSocketConfig(target) {
     reconnectDelayMs: config.reconnectDelayMs,
     keepAliveIntervalMs: config.keepAliveIntervalMs,
     keepAliveMessage: config.keepAliveMessage,
-    logMessages: config.logMessages
+    logMessages: config.logMessages,
+    commandRouting: config.commandRouting
   };
 }

@@ -169,6 +169,10 @@ export const KEEP_ALIVE_CONFIG = {
 - `enabled`：开发者配置开关；为 `false` 时不出现在面板，也不会运行。用户是否同步由面板勾选状态决定。
 - `syncOption.label` / `description`：面板中显示的名称和说明。
 - `syncOption.defaultEnabled`：这个站点尚未产生本地勾选记录时的默认状态。示例为安全起见均设为 `false`。
+- `commandRouting.pathSegments`：根据 `command.action` 的 URL 完整路径段选择 target。推荐使用这个字段，例如 `"website-one"` 会匹配 `/api/website-one/orders`，但不会匹配 `/api/website-one-preview/orders`。每项只能是一个路径段，内部不能包含 `/`。
+- `commandRouting.pathPrefixes`：可选的路径前缀规则，例如 `/api/website-one`。
+- `commandRouting.pathIncludes`：可选的 pathname 子串规则；只有无法使用完整路径段或前缀时才建议使用。
+- `commandRouting.allowedOrigins`：必填的精确 Origin 白名单，例如 `https://api.example.com`；必须同时满足 Origin 和路径规则，避免把 CSRF Token 带到错误域名。
 - `pageUrl`：目标页面地址；当 `openIfMissing` 为 `true` 时会自动打开。
 - `urlPatterns`：Chrome match patterns，用于查找已打开的目标标签页。
 - `urlIncludes` / `urlRegexes`：二次过滤规则，避免误点同域名下的其它页面。
@@ -218,7 +222,20 @@ MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息
 
 ### WebSocket command 消息
 
-服务端发送 JSON 消息且 `type` 为 `command` 时，扩展会在当前匹配的 `pageUrl` 标签页内发起 fetch：
+服务端发送 JSON 消息且 `type` 为 `command` 时，扩展会先解析 `action` URL。如果任一 target 配置了 `commandRouting`，所有已启用的 WebSocket target 都必须同时配置精确 `allowedOrigins` 和至少一种路径规则，并且每个 action 必须唯一匹配一个 target。随后扩展才会使用该 target 的 `pageUrl` 和 CSRF token 配置发起 fetch；配置不完整、没有匹配或同时匹配多个 target 时都会拒绝执行。只有所有 target 的路由数组都为空时，才继续沿用旧的“消息属于收到它的 WebSocket”行为。
+
+两个站点共用 WebSocket 时，建议为每个站点配置互不重复的完整路径段：
+
+```js
+commandRouting: {
+  allowedOrigins: ["https://api.example.com"],
+  pathPrefixes: [],
+  pathSegments: ["website-one"],
+  pathIncludes: []
+}
+```
+
+两个相同 WebSocket 若广播同一条带 `id` 的 command，扩展会按 `target.id + command.id` 复用一次执行结果，不会重复调用业务接口。随后扩展会在匹配 target 的 `pageUrl` 标签页内发起 fetch：
 
 - `action`：作为 fetch URL。
 - `payload`：作为 fetch 请求体；对象会序列化为 JSON 字符串。

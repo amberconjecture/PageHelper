@@ -19,6 +19,17 @@ export const KEEP_ALIVE_CONFIG = {
         defaultEnabled: false
       },
 
+      // 两个站点共用 WebSocket 时，按 command.action 的 URL 路径选择唯一 target。
+      // 推荐填写完整路径段，例如 action=/api/website-one/orders 时填写 "website-one"。
+      // 启用时必须同时填写精确 allowedOrigins，并为每个启用的 WebSocket target 配置路由。
+      // 只有所有 target 的数组都为空时，才沿用“消息属于收到它的 WebSocket”的旧行为。
+      commandRouting: {
+        allowedOrigins: [],
+        pathPrefixes: [],
+        pathSegments: [],
+        pathIncludes: []
+      },
+
       // 用于在没有匹配标签页且 openIfMissing=true 时打开页面。
       pageUrl: "https://example.com/app/home",
 
@@ -93,6 +104,14 @@ export const KEEP_ALIVE_CONFIG = {
         label: "网站二",
         description: "独立的单 CSRF Token 配置",
         defaultEnabled: false
+      },
+
+      // 请填写网站二的精确 API Origin，以及与网站一不重复的完整路径段。
+      commandRouting: {
+        allowedOrigins: [],
+        pathPrefixes: [],
+        pathSegments: [],
+        pathIncludes: []
       },
 
       pageUrl: "https://second.example.com/app/home",

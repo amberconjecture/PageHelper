@@ -1,5 +1,10 @@
 import { KEEP_ALIVE_CONFIG } from "./config.js";
 import { WEBSOCKET_RECONCILE_ALARM, WEBSOCKET_SESSION_PAGE_TABS_STORAGE_KEY } from "./constants.js";
+import {
+  buildCommandExecutionKey,
+  createCommandExecutionDeduplicator
+} from "./command-deduplication.js";
+import { resolveCommandTargetByAction } from "./command-routing.js";
 import { formatTimestamp, logError, logInfo, logWarn, normalizeError } from "./logger.js";
 import {
   executeWebSocketCommandFetchInPage,
@@ -44,6 +49,7 @@ const webSocketConnections = new Map();
 const webSocketReconnectTimers = new Map();
 const webSocketSessionPageOpenPromises = new Map();
 const webSocketSessionPageTabRecords = new Map();
+const webSocketCommandExecutionDeduplicator = createCommandExecutionDeduplicator();
 const webSocketReconcileGenerations = new Map();
 let webSocketSessionPageTabStorageQueue = Promise.resolve();
 
@@ -1095,16 +1101,71 @@ async function handleWebSocketCommandMessage(target, config, connection, message
     return;
   }
 
+  const routingResult = resolveCommandTargetByAction(getWebSocketTargets(), message.action, target);
+  if (!routingResult.ok) {
+    const responseMessage = {
+      type: "event",
+      action: "client_response",
+      payload: {
+        ok: false,
+        reason: routingResult.reason,
+        matchedTargetIds: routingResult.matchedTargetIds || [],
+        missingTargetIds: routingResult.missingTargetIds || [],
+        invalidTargetIds: routingResult.invalidTargetIds || []
+      },
+      id: message.id
+    };
+    const sent = sendWebSocketJson(connection, responseMessage);
+
+    logWarn("Rejected WebSocket command because action routing did not select one target.", {
+      connectionTargetId: target.id,
+      action: message.action,
+      id: message.id,
+      reason: routingResult.reason,
+      actionOrigin: routingResult.actionOrigin,
+      actionPathname: routingResult.actionPathname,
+      matchedTargetIds: routingResult.matchedTargetIds,
+      missingTargetIds: routingResult.missingTargetIds,
+      invalidTargetIds: routingResult.invalidTargetIds,
+      configuredTargetIds: routingResult.configuredTargetIds,
+      responseSent: sent
+    });
+    return;
+  }
+
+  const commandTarget = routingResult.target;
+  const requestedTargetId = String(message.target_id ?? message.targetId ?? "").trim();
+  if (requestedTargetId && requestedTargetId !== commandTarget.id) {
+    // action 路由是本地选择目标配置的最终依据；服务端附带的 target id 只用于诊断。
+    logWarn("WebSocket command target id differs from the action-routed target.", {
+      connectionTargetId: target.id,
+      routedTargetId: commandTarget.id,
+      requestedTargetId,
+      action: message.action,
+      id: message.id
+    });
+  }
+
+  const commandConfig =
+    commandTarget.id === target.id ? config : normalizeWebSocketConfig(commandTarget);
+  const commandConnection = getWebSocketCommandExecutionConnection(commandTarget.id, connection);
+
   logInfo("WebSocket command received.", {
-    targetId: target.id,
-    tabId: connection.tabId,
-    sessionTabId: connection.sessionTabId,
+    targetId: commandTarget.id,
+    connectionTargetId: target.id,
+    routingMode: routingResult.mode,
+    tabId: commandConnection.tabId,
+    sessionTabId: commandConnection.sessionTabId,
     action: message.action,
     method: message.method || "POST",
     id: message.id
   });
 
-  const result = await executeWebSocketCommandFetch(target, config, connection, message);
+  const execution = await webSocketCommandExecutionDeduplicator.run(
+    buildCommandExecutionKey(commandTarget.id, message),
+    () => executeWebSocketCommandFetch(commandTarget, commandConfig, commandConnection, message)
+  );
+  const result = execution.result;
   const responseMessage = {
     type: "event",
     action: "client_response",
@@ -1120,17 +1181,41 @@ async function handleWebSocketCommandMessage(target, config, connection, message
 
   const sent = sendWebSocketJson(connection, responseMessage);
   logInfo(sent ? "WebSocket command result sent." : "WebSocket command result not sent.", {
-    targetId: target.id,
-    tabId: connection.tabId,
-    sessionTabId: connection.sessionTabId,
+    targetId: commandTarget.id,
+    connectionTargetId: target.id,
+    routingMode: routingResult.mode,
+    tabId: commandConnection.tabId,
+    sessionTabId: commandConnection.sessionTabId,
     action: message.action,
     id: message.id,
     sent,
+    reusedCommandExecution: execution.reused,
     commandOk: result.ok,
     status: result.status,
     responseOk: result.responseOk,
     reason: result.reason
   });
+}
+
+function getWebSocketCommandExecutionConnection(targetId, incomingConnection) {
+  const targetConnection = webSocketConnections.get(targetId);
+  if (targetConnection) {
+    return targetConnection;
+  }
+
+  if (incomingConnection.targetId === targetId) {
+    return incomingConnection;
+  }
+
+  // action 被重新路由到另一站点但该站点暂时没有 socket 时，只借用一个独立的
+  // 页面定位上下文，避免把接收消息的连接改写成另一个 target 的 session tab。
+  return {
+    targetId,
+    tabId: null,
+    pageUrl: null,
+    sessionTabId: null,
+    sessionPageUrl: null
+  };
 }
 
 async function executeWebSocketCommandFetch(target, config, connection, message) {

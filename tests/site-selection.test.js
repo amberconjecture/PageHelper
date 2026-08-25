@@ -29,6 +29,7 @@ const {
   setSiteSelection
 } = await import("../src/site-selection.js");
 const { KEEP_ALIVE_CONFIG } = await import("../src/config.js");
+const { resolveCommandTargetByAction } = await import("../src/command-routing.js");
 const {
   getEnabledTargets,
   getWebSocketTargets,
@@ -121,6 +122,34 @@ test("configured sites normalize to two and one CSRF token steps", () => {
   const [firstSite, secondSite] = KEEP_ALIVE_CONFIG.targets;
   assert.equal(normalizeWebSocketConfig(firstSite).csrfTokens.length, 2);
   assert.equal(normalizeWebSocketConfig(secondSite).csrfTokens.length, 1);
+});
+
+test("action routing selects the matching site's independent token plan", () => {
+  const [firstSite, secondSite] = KEEP_ALIVE_CONFIG.targets.map((target, index) => ({
+    ...target,
+    commandRouting: {
+      allowedOrigins: ["https://api.example.com"],
+      pathSegments: [index === 0 ? "website-one" : "website-two"]
+    }
+  }));
+
+  const firstRoute = resolveCommandTargetByAction(
+    [firstSite, secondSite],
+    "https://api.example.com/v1/website-one/orders",
+    secondSite
+  );
+  const secondRoute = resolveCommandTargetByAction(
+    [firstSite, secondSite],
+    "https://api.example.com/v1/website-two/orders",
+    firstSite
+  );
+
+  assert.equal(firstRoute.ok, true);
+  assert.equal(firstRoute.target.id, firstSite.id);
+  assert.equal(normalizeWebSocketConfig(firstRoute.target).csrfTokens.length, 2);
+  assert.equal(secondRoute.ok, true);
+  assert.equal(secondRoute.target.id, secondSite.id);
+  assert.equal(normalizeWebSocketConfig(secondRoute.target).csrfTokens.length, 1);
 });
 
 test("unknown site ids cannot be persisted", async () => {
