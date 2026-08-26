@@ -24,6 +24,7 @@ import {
   normalizeWebSocketWatcherConfig
 } from "./target-config.js";
 import {
+  findOrCreateMatchingTab,
   findMatchingTabs,
   getQueryUrlPatterns,
   matchesTargetUrl,
@@ -376,7 +377,12 @@ async function openWebSocketSessionPageIfMissing(target, sessionPageTarget, reas
     return findMatchingTabs(sessionPageTarget, { log: false });
   }
 
-  const openPromise = openWebSocketSessionPage(target, reason, reconcileGeneration);
+  const openPromise = openWebSocketSessionPage(
+    target,
+    sessionPageTarget,
+    reason,
+    reconcileGeneration
+  );
   webSocketSessionPageOpenPromises.set(target.id, openPromise);
 
   try {
@@ -394,7 +400,7 @@ async function openWebSocketSessionPageIfMissing(target, sessionPageTarget, reas
   return findMatchingTabs(sessionPageTarget, { log: false });
 }
 
-async function openWebSocketSessionPage(target, reason, reconcileGeneration) {
+async function openWebSocketSessionPage(target, sessionPageTarget, reason, reconcileGeneration) {
   logInfo("TargetUrl is open but pageUrl is missing; opening pageUrl for WebSocket.", {
     reason,
     targetId: target.id,
@@ -407,10 +413,20 @@ async function openWebSocketSessionPage(target, reason, reconcileGeneration) {
       return;
     }
 
-    const createdTab = await chrome.tabs.create({
-      url: target.pageUrl,
+    const openResult = await findOrCreateMatchingTab(sessionPageTarget, {
       active: target.activeWhenOpened !== false
     });
+    const createdTab = openResult.tab;
+    if (!openResult.created) {
+      logInfo("WebSocket pageUrl appeared before a new tab was needed.", {
+        reason,
+        targetId: target.id,
+        tabId: createdTab?.id,
+        pageUrl: target.pageUrl
+      });
+      return;
+    }
+
     if (!isWebSocketTargetConfigured(target.id)) {
       return;
     }
@@ -426,14 +442,21 @@ async function openWebSocketSessionPage(target, reason, reconcileGeneration) {
       await forgetWebSocketSessionPageTab(target.id);
       return;
     }
-    await showWebSocketLoginPrompt(createdTab, target);
+    if (!openResult.joined) {
+      await showWebSocketLoginPrompt(createdTab, target);
+    }
 
-    logInfo("Opened pageUrl for WebSocket.", {
-      reason,
-      targetId: target.id,
-      tabId: createdTab.id,
-      url: createdTab.url || target.pageUrl
-    });
+    logInfo(
+      openResult.joined
+        ? "Reused a concurrently opened pageUrl for WebSocket."
+        : "Opened pageUrl for WebSocket.",
+      {
+        reason,
+        targetId: target.id,
+        tabId: createdTab.id,
+        url: createdTab.url || target.pageUrl
+      }
+    );
   } catch (error) {
     logWarn("Could not open pageUrl for WebSocket.", {
       reason,

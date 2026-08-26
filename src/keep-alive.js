@@ -15,6 +15,7 @@ import {
   summarizeTargets
 } from "./target-config.js";
 import {
+  findOrCreateMatchingTab,
   findMatchingTabs,
   getQueryUrlPatterns,
   selectPreferredTab,
@@ -177,27 +178,39 @@ async function runTarget(target, trigger, options = {}) {
       activeWhenOpened: target.activeWhenOpened !== false
     });
 
-    const createdTab = await chrome.tabs.create({
-      url: target.pageUrl,
+    const openResult = await findOrCreateMatchingTab(target, {
       active: target.activeWhenOpened !== false
     });
 
-    await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
-    if (!isTargetConfigured(target.id)) {
+    if (!openResult.created) {
+      tabsToClick = openResult.tabs;
+    } else if (openResult.joined) {
+      logInfo("Reused a page open already started by another trigger.", {
+        targetId: target.id,
+        tabId: openResult.tab?.id,
+        pageUrl: target.pageUrl
+      });
+      return;
+    } else {
+      const createdTab = openResult.tab;
+
+      await waitForTabComplete(createdTab.id, target.pageLoadTimeoutMs ?? 30000);
+      if (!isTargetConfigured(target.id)) {
+        return;
+      }
+      await showLoginPrompt(createdTab, target);
+      logInfo("Opened page and prompted the user to sign in.", {
+        targetId: target.id,
+        tabId: createdTab.id,
+        url: createdTab.url
+      });
+
+      // 新打开页面后立即让 WebSocket 模块重新扫描，避免等到下一次周期校验。
+      if (options.onPageOpened) {
+        void options.onPageOpened(`runTarget-opened-page:${target.id}`);
+      }
       return;
     }
-    await showLoginPrompt(createdTab, target);
-    logInfo("Opened page and prompted the user to sign in.", {
-      targetId: target.id,
-      tabId: createdTab.id,
-      url: createdTab.url
-    });
-
-    // 新打开页面后立即让 WebSocket 模块重新扫描，避免等到下一次周期校验。
-    if (options.onPageOpened) {
-      void options.onPageOpened(`runTarget-opened-page:${target.id}`);
-    }
-    return;
   }
 
   if (!tabsToClick.length) {
