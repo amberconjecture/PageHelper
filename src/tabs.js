@@ -203,17 +203,23 @@ function tabMatchesTarget(tab, target) {
 }
 
 function matchesConfiguredPageUrl(rawUrl, rawPageUrl) {
-  if (rawUrl.startsWith(rawPageUrl)) {
-    return true;
-  }
-
   try {
     const url = new URL(rawUrl);
     const pageUrl = new URL(rawPageUrl);
-    return (
-      url.origin === pageUrl.origin &&
-      normalizePathname(url.pathname) === normalizePathname(pageUrl.pathname)
-    );
+    if (
+      url.origin !== pageUrl.origin ||
+      normalizePathname(url.pathname) !== normalizePathname(pageUrl.pathname)
+    ) {
+      return false;
+    }
+
+    // pageUrl 没声明 query/hash 时允许页面追加临时状态；一旦显式声明，
+    // 它们就是页面身份的一部分，不能让同域名的另一个 target 复用这个 Tab。
+    if (!containsConfiguredSearchParams(url, pageUrl)) {
+      return false;
+    }
+
+    return !pageUrl.hash || normalizeHash(url.hash) === normalizeHash(pageUrl.hash);
   } catch {
     return false;
   }
@@ -221,6 +227,31 @@ function matchesConfiguredPageUrl(rawUrl, rawPageUrl) {
 
 function normalizePathname(pathname) {
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+}
+
+function containsConfiguredSearchParams(url, pageUrl) {
+  if (!pageUrl.search) {
+    return true;
+  }
+
+  const actualCounts = countSearchParams(url.searchParams);
+  const expectedCounts = countSearchParams(pageUrl.searchParams);
+  return [...expectedCounts].every(
+    ([entry, count]) => (actualCounts.get(entry) || 0) >= count
+  );
+}
+
+function countSearchParams(searchParams) {
+  const counts = new Map();
+  for (const [key, value] of searchParams) {
+    const entry = JSON.stringify([key, value]);
+    counts.set(entry, (counts.get(entry) || 0) + 1);
+  }
+  return counts;
+}
+
+function normalizeHash(hash) {
+  return hash.length > 1 ? hash.replace(/\/+$/, "") : hash;
 }
 
 function matchesChromeUrlPattern(rawUrl, rawPattern) {

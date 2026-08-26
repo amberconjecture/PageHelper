@@ -57,6 +57,37 @@ test("pageUrl matching tolerates query, hash, and trailing-slash normalization",
   assert.equal(matchesTargetUrl("https://admin.example.com/another", pageTarget), false);
 });
 
+test("different configured paths do not share a prefix-matching tab", () => {
+  const pageTarget = {
+    pageUrl: "https://admin.example.com/app",
+    urlPatterns: [],
+    urlIncludes: [],
+    urlRegexes: []
+  };
+
+  assert.equal(matchesTargetUrl("https://admin.example.com/app", pageTarget), true);
+  assert.equal(matchesTargetUrl("https://admin.example.com/app-two", pageTarget), false);
+  assert.equal(matchesTargetUrl("https://admin.example.com/app/orders", pageTarget), false);
+});
+
+test("configured query and hash distinguish pageUrl targets on the same path", () => {
+  const queryTarget = {
+    pageUrl: "https://admin.example.com/home?site=one",
+    urlPatterns: [],
+    urlIncludes: [],
+    urlRegexes: []
+  };
+  const hashTarget = {
+    ...queryTarget,
+    pageUrl: "https://admin.example.com/home#/site-one"
+  };
+
+  assert.equal(matchesTargetUrl("https://admin.example.com/home?site=one&dialog=open", queryTarget), true);
+  assert.equal(matchesTargetUrl("https://admin.example.com/home?site=two", queryTarget), false);
+  assert.equal(matchesTargetUrl("https://admin.example.com/home#/site-one/", hashTarget), true);
+  assert.equal(matchesTargetUrl("https://admin.example.com/home#/site-two", hashTarget), false);
+});
+
 test("explicit Chrome patterns still reject unrelated tabs during fallback scans", () => {
   assert.equal(
     matchesTargetUrl("https://unrelated.example.com/home", {
