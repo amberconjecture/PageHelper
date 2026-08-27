@@ -207,6 +207,7 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.commandHeaders`：收到 WebSocket `command` 消息后，在 `pageUrl` 页面内发起 fetch 时追加的固定请求头对象。
 - `webSocket.storageCheckIntervalMs`：目标页内检测 local/session storage 变化的间隔，默认 `3000`。
 - `webSocket.reconnectDelayMs`：连接异常关闭后的重连延迟，默认 `5000`。
+- `webSocket.connectTimeoutMs`：WebSocket 握手保持 `CONNECTING` 的最长时间，默认 `15000`；超时后会关闭旧连接并按 `reconnectDelayMs` 自动重连。
 - `webSocket.keepAliveIntervalMs`：WebSocket 连接成功后发送客户端心跳的间隔，默认 `20000`。MV3 Service Worker 空闲窗口约 30 秒，因此会被限制在 `5000` 到 `25000` 之间；设置为 `0` 或 `false` 可关闭心跳。
 - `webSocket.keepAliveMessage`：客户端心跳消息，默认发送 `{"type":"pagehelper.keepalive"}`。如果服务端要求固定文本或其它 JSON 格式，请改成服务端能识别或忽略的消息。
 - `webSocket.logMessages`：是否记录服务端消息长度，默认 `false`，避免高频消息刷屏。

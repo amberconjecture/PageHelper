@@ -122,6 +122,8 @@ test("configured sites normalize to two and one CSRF token steps", () => {
   const [firstSite, secondSite] = KEEP_ALIVE_CONFIG.targets;
   assert.equal(normalizeWebSocketConfig(firstSite).csrfTokens.length, 2);
   assert.equal(normalizeWebSocketConfig(secondSite).csrfTokens.length, 1);
+  assert.equal(normalizeWebSocketConfig(firstSite).connectTimeoutMs, 15000);
+  assert.equal(normalizeWebSocketConfig(secondSite).connectTimeoutMs, 15000);
 });
 
 test("action routing selects the matching site's independent token plan", () => {

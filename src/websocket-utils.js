@@ -156,8 +156,23 @@ export function stringifyQueryValue(value) {
   return JSON.stringify(value);
 }
 
-export function isWebSocketUsable(socket) {
-  return socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN;
+export function isWebSocketUsable(socket, options = {}) {
+  if (socket.readyState === WebSocket.OPEN) {
+    return true;
+  }
+
+  if (socket.readyState !== WebSocket.CONNECTING) {
+    return false;
+  }
+
+  const connectStartedAt = Number(options.connectStartedAt);
+  const connectTimeoutMs = Number(options.connectTimeoutMs);
+  if (!Number.isFinite(connectStartedAt) || !Number.isFinite(connectTimeoutMs)) {
+    return true;
+  }
+
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+  return now - connectStartedAt < connectTimeoutMs;
 }
 
 export function getWebSocketReadyStateName(readyState) {

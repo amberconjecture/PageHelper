@@ -5,6 +5,7 @@ export const KEEP_ALIVE_CONFIG = {
   defaultStartDelaySeconds: 10,
   defaultWebSocketStorageCheckIntervalMs: 3000,
   defaultWebSocketReconnectDelayMs: 5000,
+  defaultWebSocketConnectTimeoutMs: 15000,
   defaultWebSocketReconcileIntervalMinutes: 1,
   defaultWebSocketKeepAliveIntervalMs: 20000,
 
@@ -88,6 +89,7 @@ export const KEEP_ALIVE_CONFIG = {
 
         storageCheckIntervalMs: 3000,
         reconnectDelayMs: 5000,
+        connectTimeoutMs: 15000,
         keepAliveIntervalMs: 20000,
         keepAliveMessage: {
           type: "pagehelper.keepalive"
@@ -161,6 +163,7 @@ export const KEEP_ALIVE_CONFIG = {
         commandHeaders: {},
         storageCheckIntervalMs: 3000,
         reconnectDelayMs: 5000,
+        connectTimeoutMs: 15000,
         keepAliveIntervalMs: 20000,
         keepAliveMessage: {
           type: "pagehelper.keepalive"

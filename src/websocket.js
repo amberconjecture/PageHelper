@@ -879,7 +879,13 @@ function connectOrUpdateWebSocket(target, config, candidate, reason, reconcileGe
   }
 
   const existing = webSocketConnections.get(target.id);
-  if (existing?.url === urlResult.url && isWebSocketUsable(existing.socket)) {
+  if (
+    existing?.url === urlResult.url &&
+    isWebSocketUsable(existing.socket, {
+      connectStartedAt: existing.connectStartedAt,
+      connectTimeoutMs: config.connectTimeoutMs
+    })
+  ) {
     existing.tabId = candidate.tabId;
     existing.pageUrl = candidate.pageUrl;
     existing.sessionTabId = candidate.sessionTabId;
@@ -930,11 +936,25 @@ function connectOrUpdateWebSocket(target, config, candidate, reason, reconcileGe
     openedAt: null,
     keepAliveTimerId: null,
     keepAliveIntervalMs: 0,
-    keepAlivePayload: null
+    keepAlivePayload: null,
+    connectStartedAt: Date.now(),
+    connectTimeoutTimerId: null
   };
   webSocketConnections.set(target.id, connection);
 
   socket.addEventListener("open", () => {
+    const current = webSocketConnections.get(target.id);
+    if (current?.socket !== socket) {
+      connection.expectedClose = true;
+      try {
+        socket.close(1000, "stale-connection-opened");
+      } catch {
+        // 已经被替换的连接无需再影响当前连接。
+      }
+      return;
+    }
+
+    clearWebSocketConnectTimeout(connection);
     connection.openedAt = Date.now();
     syncWebSocketKeepAlive(connection, config, reason);
     logInfo("WebSocket connected.", {
@@ -961,6 +981,7 @@ function connectOrUpdateWebSocket(target, config, candidate, reason, reconcileGe
   });
 
   socket.addEventListener("close", (event) => {
+    clearWebSocketConnectTimeout(connection);
     const current = webSocketConnections.get(target.id);
     const isCurrentConnection = current?.socket === socket;
     if (isCurrentConnection) {
@@ -983,6 +1004,8 @@ function connectOrUpdateWebSocket(target, config, candidate, reason, reconcileGe
     }
   });
 
+  startWebSocketConnectTimeout(connection, config);
+
   logInfo("WebSocket connecting.", {
     reason,
     targetId: target.id,
@@ -992,6 +1015,53 @@ function connectOrUpdateWebSocket(target, config, candidate, reason, reconcileGe
     sessionPageUrl: candidate.sessionPageUrl,
     webSocketUrl: redactWebSocketUrl(urlResult.url)
   });
+}
+
+function startWebSocketConnectTimeout(connection, config) {
+  clearWebSocketConnectTimeout(connection);
+  connection.connectTimeoutTimerId = setTimeout(() => {
+    const current = webSocketConnections.get(connection.targetId);
+    if (
+      current?.socket !== connection.socket ||
+      connection.socket.readyState !== WebSocket.CONNECTING
+    ) {
+      return;
+    }
+
+    connection.expectedClose = true;
+    webSocketConnections.delete(connection.targetId);
+    stopWebSocketKeepAlive(connection);
+
+    logWarn("WebSocket connection timed out.", {
+      targetId: connection.targetId,
+      timeoutMs: config.connectTimeoutMs,
+      readyState: getWebSocketReadyStateName(connection.socket.readyState),
+      webSocketUrl: redactWebSocketUrl(connection.url)
+    });
+
+    try {
+      connection.socket.close(1000, "connect-timeout");
+    } catch (error) {
+      logWarn("Could not close timed-out WebSocket connection.", {
+        targetId: connection.targetId,
+        error
+      });
+    }
+
+    scheduleWebSocketReconnect(
+      connection.targetId,
+      config.reconnectDelayMs,
+      "websocket-connect-timeout"
+    );
+  }, config.connectTimeoutMs);
+}
+
+function clearWebSocketConnectTimeout(connection) {
+  if (connection.connectTimeoutTimerId) {
+    clearTimeout(connection.connectTimeoutTimerId);
+  }
+
+  connection.connectTimeoutTimerId = null;
 }
 
 function syncWebSocketKeepAlive(connection, config, reason) {
@@ -1453,6 +1523,7 @@ function disconnectWebSocket(targetId, reason) {
 
   connection.expectedClose = true;
   webSocketConnections.delete(targetId);
+  clearWebSocketConnectTimeout(connection);
   stopWebSocketKeepAlive(connection);
 
   try {

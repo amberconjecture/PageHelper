@@ -2,6 +2,7 @@ import { KEEP_ALIVE_CONFIG } from "./config.js";
 import {
   DEFAULT_INTERVAL_MINUTES,
   DEFAULT_WAIT_FOR_SELECTOR_MS,
+  DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   DEFAULT_WEBSOCKET_KEEP_ALIVE_INTERVAL_MS,
   DEFAULT_WEBSOCKET_RECONNECT_DELAY_MS,
   DEFAULT_WEBSOCKET_RECONCILE_INTERVAL_MINUTES,
@@ -164,6 +165,7 @@ export function normalizeWebSocketConfig(target) {
     commandHeaders: normalizeHeaderMap(rawConfig.commandHeaders ?? target.webSocketCommandHeaders),
     storageCheckIntervalMs: normalizeWebSocketStorageCheckIntervalMs(rawConfig.storageCheckIntervalMs),
     reconnectDelayMs: normalizeWebSocketReconnectDelayMs(rawConfig.reconnectDelayMs),
+    connectTimeoutMs: normalizeWebSocketConnectTimeoutMs(rawConfig.connectTimeoutMs),
     keepAliveIntervalMs: normalizeWebSocketKeepAliveIntervalMs(
       rawConfig.keepAliveIntervalMs ?? target.webSocketKeepAliveIntervalMs
     ),
@@ -344,6 +346,19 @@ export function normalizeWebSocketReconnectDelayMs(value) {
   }
 
   return Math.max(1000, delay);
+}
+
+export function normalizeWebSocketConnectTimeoutMs(value) {
+  const timeout = Number(
+    value ??
+      KEEP_ALIVE_CONFIG.defaultWebSocketConnectTimeoutMs ??
+      DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS
+  );
+  if (!Number.isFinite(timeout)) {
+    return DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
+  }
+
+  return Math.max(1000, timeout);
 }
 
 export function normalizeWebSocketKeepAliveIntervalMs(value) {
