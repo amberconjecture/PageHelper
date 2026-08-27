@@ -100,6 +100,31 @@ test("explicit Chrome patterns still reject unrelated tabs during fallback scans
   );
 });
 
+test("explicit Chrome patterns support an IP address with a fixed port", () => {
+  const portTarget = {
+    pageUrl: "http://100.154.43.233:3001/",
+    urlPatterns: ["http://100.154.43.233:3001/*"],
+    urlIncludes: ["http://100.154.43.233:3001/"],
+    urlRegexes: []
+  };
+
+  assert.equal(matchesTargetUrl("http://100.154.43.233:3001/", portTarget), true);
+  assert.equal(matchesTargetUrl("http://100.154.43.233:3001/any/nested/path", portTarget), true);
+  assert.equal(matchesTargetUrl("http://100.154.43.233:3002/any/nested/path", portTarget), false);
+});
+
+test("a Chrome pattern without a port continues to match every port", () => {
+  const anyPortTarget = {
+    pageUrl: "http://100.154.43.233/",
+    urlPatterns: ["http://100.154.43.233/*"],
+    urlIncludes: [],
+    urlRegexes: []
+  };
+
+  assert.equal(matchesTargetUrl("http://100.154.43.233:3001/path", anyPortTarget), true);
+  assert.equal(matchesTargetUrl("http://100.154.43.233:8080/path", anyPortTarget), true);
+});
+
 test("concurrent missing-page opens create only one tab", async () => {
   createCalls = 0;
   queryResults.push([], [], [], []);

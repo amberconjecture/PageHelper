@@ -259,14 +259,16 @@ function matchesChromeUrlPattern(rawUrl, rawPattern) {
     return /^(https?|file|ftp):/i.test(rawUrl);
   }
 
-  const match = /^(\*|http|https|file|ftp):\/\/([^/]*)(\/.*)$/.exec(rawPattern);
+  const match = /^(\*|http|https|file|ftp):\/\/(\[[^\]]+\]|[^/:]*)(?::(\*|\d+))?(\/.*)$/.exec(
+    rawPattern
+  );
   if (!match) {
     return false;
   }
 
   try {
     const url = new URL(rawUrl);
-    const [, scheme, host, path] = match;
+    const [, scheme, host, port, path] = match;
     if (
       scheme === "*"
         ? !["http:", "https:"].includes(url.protocol)
@@ -286,6 +288,10 @@ function matchesChromeUrlPattern(rawUrl, rawPattern) {
       return false;
     }
 
+    if (port && port !== "*" && normalizedUrlPort(url) !== port) {
+      return false;
+    }
+
     const pathPattern = path
       .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
       .replace(/\*/g, ".*");
@@ -293,6 +299,22 @@ function matchesChromeUrlPattern(rawUrl, rawPattern) {
   } catch {
     return false;
   }
+}
+
+function normalizedUrlPort(url) {
+  if (url.port) {
+    return url.port;
+  }
+
+  if (url.protocol === "http:") {
+    return "80";
+  }
+
+  if (url.protocol === "https:") {
+    return "443";
+  }
+
+  return "";
 }
 
 function matchesRegex(value, pattern) {

@@ -191,6 +191,7 @@ export const KEEP_ALIVE_CONFIG = {
 - `webSocket.enabled`：是否启用 WebSocket 能力。
 - `webSocket.url`：服务端 WebSocket 地址，支持 `ws://` 和 `wss://`。
 - `webSocket.targetUrl` / `targetUrlPatterns` / `targetUrlIncludes` / `targetUrlRegexes`：用于检测 TargetUrl 页面的地址规则；未配置时复用 target 上的 `pageUrl` / `urlPatterns` / `urlIncludes` / `urlRegexes`。
+- 带固定端口且允许任意 path 的 TargetUrl 可以配置为：`targetUrlPatterns: ["http://100.154.43.233:3001/*"]`、`targetUrlIncludes: ["http://100.154.43.233:3001/"]`。
 - `webSocket.localStorageKey`：TargetUrl 页面 `localStorage` 中的 key，默认示例为 `auth-token`。只有这个 key 有值时才会发起连接。
 - `webSocket.localStorageQueryKey`：追加到 WebSocket URL 上的 query key；未配置时等于 `localStorageKey`。
 - `webSocket.sessionStorageKey`：顶层 `pageUrl` 页面 `sessionStorage` 中保存 client 信息的 key。
