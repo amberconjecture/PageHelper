@@ -32,9 +32,11 @@ const { KEEP_ALIVE_CONFIG } = await import("../src/config.js");
 const { resolveCommandTargetByAction } = await import("../src/command-routing.js");
 const {
   getEnabledTargets,
+  getWebSocketSessionPageTarget,
   getWebSocketTargets,
   normalizeWebSocketConfig
 } = await import("../src/target-config.js");
+const { matchesTargetUrl } = await import("../src/tabs.js");
 
 runtimeMessageHandler = async (message) => {
   if (message.type !== "pagehelper.site-selection.set") {
@@ -124,6 +126,31 @@ test("configured sites normalize to two and one CSRF token steps", () => {
   assert.equal(normalizeWebSocketConfig(secondSite).csrfTokens.length, 1);
   assert.equal(normalizeWebSocketConfig(firstSite).connectTimeoutMs, 15000);
   assert.equal(normalizeWebSocketConfig(secondSite).connectTimeoutMs, 15000);
+});
+
+test("WebSocket session page accepts configured frontend child routes", () => {
+  const sessionPageTarget = getWebSocketSessionPageTarget({
+    id: "operation",
+    pageUrl: "https://aaa.bbbb.cn/#/operation/cccc",
+    urlPatterns: ["https://aaa.bbbb.cn/*"],
+    urlIncludes: [],
+    urlRegexes: [
+      "^https://aaa\\.bbbb\\.cn/#/operation/cccc(?:/.*)?$"
+    ]
+  });
+
+  assert.equal(
+    matchesTargetUrl("https://aaa.bbbb.cn/#/operation/cccc", sessionPageTarget),
+    true
+  );
+  assert.equal(
+    matchesTargetUrl("https://aaa.bbbb.cn/#/operation/cccc/eeee", sessionPageTarget),
+    true
+  );
+  assert.equal(
+    matchesTargetUrl("https://aaa.bbbb.cn/#/operation/cccc-other", sessionPageTarget),
+    false
+  );
 });
 
 test("action routing selects the matching site's independent token plan", () => {

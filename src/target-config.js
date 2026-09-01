@@ -262,9 +262,12 @@ export function getWebSocketSessionPageTarget(target) {
   return {
     id: target.id,
     pageUrl: target.pageUrl,
-    urlPatterns: [],
-    urlIncludes: [],
-    urlRegexes: []
+    // sessionStorage 必须从 pageUrl 所属页面读取，但该页面可能已经导航到
+    // pageUrl 下的前端子路由。复用顶层匹配规则，避免 WebSocket 在子路由中
+    // 因为只按 pageUrl 的完整 hash 精确匹配而误判为“未连接”。
+    urlPatterns: normalizeArray(target.urlPatterns),
+    urlIncludes: normalizeArray(target.urlIncludes),
+    urlRegexes: normalizeArray(target.urlRegexes)
   };
 }
 

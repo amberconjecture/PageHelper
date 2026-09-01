@@ -220,6 +220,8 @@ WebSocket 创建时机：扩展启动、安装/重载、目标 Tab 完成加载�
 
 自动开页前会在共享锁内再次扫描 Tab；定时保活与 WebSocket 同时触发时只会创建一个页面。扫描也会识别导航中的 `pendingUrl`，并归一化路径尾斜杠。`pageUrl` 未声明 query/hash 时允许页面追加临时参数或路由状态；一旦显式声明 query/hash，它们会参与页面身份匹配，避免同域名的不同 target 误用同一个 Tab。
 
+WebSocket 读取 `pageUrl` 页面 `sessionStorage` 时会复用该 target 的 `urlPatterns`、`urlIncludes` 和 `urlRegexes`。因此可以用 `urlRegexes` 将一个 hash 路由及其子路由视为同一页面，例如 `^https://aaa\\.bbbb\\.cn/#/operation/cccc(?:/.*)?$`；未配置这些过滤规则时，仍按 `pageUrl` 中显式声明的 hash 精确匹配。
+
 WebSocket 关闭时机：当所有匹配 TargetUrl 的 Tab 都被关闭或导航离开后，扩展会主动断开连接。若 token 或 client_id 发生变化，扩展会用新的 query 重建连接。
 
 MV3 后台脚本是 `service_worker`，长时间没有事件或 WebSocket 消息时可能被浏览器挂起，连接也会随之关闭。扩展默认每 20 秒发送一次客户端心跳，避免连接空闲超过浏览器的后台脚本空闲窗口；如果服务端不接受默认心跳，需要调整 `keepAliveMessage`。
